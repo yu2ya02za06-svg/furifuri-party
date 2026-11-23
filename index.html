@@ -205,6 +205,8 @@ const gauss = () => { let s = 0; for (let i = 0; i < 4; i++) s += Math.random();
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kana = s => String(s == null ? '' : s).trim().toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60)).replace(/[\s　]/g, '');
 const AR = { u: '↑', d: '↓', l: '←', r: '→' };
+// 端末どうしをつなぐための中継サーバー一覧（別々のネットワークでもつながりやすくする）
+const ICE = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }, { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }] };
 
 /* =================================================================
    ホスト（PC）共通
@@ -280,10 +282,11 @@ function openPeer() {
   if (location.protocol === 'file:') $('#note').textContent = 'いまはファイルを直接開いています。スマホから参加するには、GitHub PagesなどのHTTPSのサイトに置いて開いてください。CPU相手の動作確認はこのままできます。';
   else if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') $('#note').textContent = 'HTTPSではないため、スマホのセンサー・マイク・カメラが使えません（タッチ操作になります）。';
   if (typeof Peer === 'undefined') { setNet('通信ライブラリを読み込めませんでした（インターネット接続を確認）。CPU対戦は可能です。'); showJoin(); return; }
-  peer = new Peer(PREFIX + code, { debug: 1 });
+  peer = new Peer(PREFIX + code, { debug: 1, config: ICE });
   peer.on('open', () => { setNet('スマホの参加を待っています'); showJoin(); });
-  peer.on('error', e => { if (e.type === 'unavailable-id') { peer.destroy(); code = genCode(); openPeer(); } else setNet('通信エラー：' + e.type); });
-  peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
+  peer.on('error', e => { if (e.type === 'unavailable-id') { peer.destroy(); code = genCode(); openPeer(); } else if (e.type !== 'peer-unavailable') setNet('通信エラー：' + e.type + '（自動で再接続します）'); });
+  peer.on('disconnected', () => { setNet('通信サーバーとの接続が切れました。再接続中…（この間はスマホから参加できません）'); try { peer.reconnect(); } catch (e) {} });
+  if (!openPeer.iv) openPeer.iv = setInterval(() => { if (peer && peer.disconnected && !peer.destroyed) { try { peer.reconnect(); } catch (e) {} } }, 3000); // 切れたままにしない
   peer.on('connection', conn => {
     conn.on('data', d => { try { onData(conn, d); } catch (e) { console.error(e); } });
     conn.on('close', () => { const p = players.find(q => q.conn === conn) || spects.find(q => q.conn === conn); if (p) { p.connected = false; renderLobby(); } });
@@ -2631,18 +2634,29 @@ function startPad() {
     try { AC2 = AC2 || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
     askSensors(); keepAwake(); connect();
   };
-  function connect() {
-    if (typeof Peer === 'undefined') return setJ('通信ライブラリを読み込めませんでした。電波を確認してください');
-    setJ('接続中…'); if (peer) { try { peer.destroy(); } catch (e) {} }
-    peer = new Peer({ debug: 1 });
+  function connect(tries) {
+    tries = tries || 0;
+    if (typeof Peer === 'undefined') return setJ('通信ライブラリを読み込めませんでした。電波を確認して、ページを開き直してください');
+    if (!tries) setJ('接続中…'); if (peer) { try { peer.destroy(); } catch (e) {} }
+    const lost = () => { if (!$('#pv').hidden) render({ w: 'lost', big: '接続が切れました', text: '同じなまえで入り直すと、続きから参加できます' }); };
+    peer = new Peer({ debug: 1, config: ICE }); const me = peer;
     peer.on('open', () => {
-      conn = peer.connect(PREFIX + rcode, { reliable: true, serialization: 'json' });
-      const to = setTimeout(() => { if (!conn.open) setJ('ルームが見つかりません。コードを確認してください'); }, 9000);
-      conn.on('open', () => { clearTimeout(to); conn.send({ t: 'join', name: myName, face: face.get() }); });
-      conn.on('data', d => { try { onMsg(d); } catch (e) { console.error(e); } });
-      conn.on('close', () => { showView(); render({ w: 'lost', big: '接続が切れました', text: '同じなまえで入り直すと、続きから参加できます' }); });
+      conn = peer.connect(PREFIX + rcode, { reliable: true, serialization: 'json' }); const c = conn;
+      // PCは見つかったが、端末どうしの通信がなかなか開かない場合（ネットワークの相性）
+      const t1 = setTimeout(() => { if (!c.open && peer === me) setJ('PCは見つかりました。接続に時間がかかっています…'); }, 6000);
+      const t2 = setTimeout(() => { if (!c.open && peer === me) { const st = c.peerConnection ? c.peerConnection.iceConnectionState : '不明'; setJ(`PCは見つかりましたが、つながりませんでした（状態：${st}）。スマホをPCと同じWi-Fiにつないで、もう一度「参加する」を押してください`); } }, 25000);
+      c.on('open', () => { clearTimeout(t1); clearTimeout(t2); c.send({ t: 'join', name: myName, face: face.get() }); });
+      c.on('data', d => { try { onMsg(d); } catch (e) { console.error(e); } });
+      c.on('close', () => { if (conn === c) { showView(); lost(); } });
     });
-    peer.on('error', e => { setJ(e.type === 'peer-unavailable' ? 'ルームが見つかりません。コードを確認してください' : '通信エラー：' + e.type); if (!$('#pv').hidden) render({ w: 'lost', big: '接続が切れました', text: '同じなまえで入り直すと、続きから参加できます' }); });
+    peer.on('error', e => {
+      if (peer !== me) return;
+      if (e.type === 'peer-unavailable') { // PC側のルームが通信サーバー上に見つからない
+        if (tries < 3) { setJ(`ルームを探しています…（${tries + 2}回目）`); setTimeout(() => { if (peer === me) connect(tries + 1); }, 2500); return; }
+        setJ(`ルーム「${rcode}」が見つかりません。PCの画面のルームコードと同じか確認してください。PCのページを開き直すとコードが変わるので、QRを読み直してください`);
+      } else setJ('通信エラー：' + e.type + '。電波を確認して、もう一度「参加する」を押してください');
+      lost();
+    });
   }
   function showView() { $('#pj').hidden = true; $('#pv').hidden = false; }
   function onMsg(d) {
