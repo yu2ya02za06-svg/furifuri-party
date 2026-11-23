@@ -21,6 +21,8 @@ html,body{margin:0;height:100%;font-family:var(--font);background:#16233a;color:
 .card{background:#fff;border-radius:28px;padding:18px 28px;width:min(820px,100%);box-shadow:0 12px 0 rgba(0,0,0,.15);margin:auto}
 .card.wide{width:min(1100px,100%)}
 .overlay.low{background:none;pointer-events:none}.overlay.low .card{pointer-events:auto;padding:14px 22px;width:min(700px,100%);margin:auto auto 0}
+.cbtn{font-size:14px;min-height:36px;padding:4px 12px;margin-top:6px}
+.chk{display:flex;gap:8px;align-items:center;font-weight:800;font-size:15px;margin:2px 0 8px;cursor:pointer}.chk input{width:20px;height:20px}
 .mute{position:fixed;right:10px;bottom:10px;z-index:5;font-size:13px;min-height:34px;padding:4px 12px;opacity:.75}
 h1{margin:0;font-size:36px;font-weight:800;line-height:1.1;color:#ff4d5e}
 h2{margin:0 0 12px;font-size:30px;font-weight:800}
@@ -124,11 +126,14 @@ button.small{font-size:14px;min-height:40px;background:rgba(255,255,255,.25);col
           <div>スマホのカメラでQRを読み取って参加</div>
           <div class="code">ルームコード <b id="code">----</b></div>
           <div id="url" class="url"></div>
+          <button id="copyurl" type="button" class="cbtn">参加URLをコピー</button>
           <div id="net" class="net">接続準備中…</div>
         </div>
       </div>
       <ul id="plist" class="plist"></ul>
       <p id="specs" class="hint"></p>
+      <label class="chk"><input type="checkbox" id="remote"> リモートで遊ぶ（離れた友達と通話アプリの画面共有で遊ぶ）</label>
+      <p id="rhint" class="hint" hidden>Discord や LINE のビデオ通話でこの画面を共有し、「参加URLをコピー」で友達にURLを送ってください。画面共有の遅れで不公平になるタイミング勝負のゲームと、同じ部屋にいる前提のゲームは出ません。</p>
       <div id="mode" class="seg">
         <button type="button" data-m="board" class="on">すごろく</button>
         <button type="button" data-m="rally">ミニゲーム連戦</button>
@@ -205,6 +210,32 @@ const gauss = () => { let s = 0; for (let i = 0; i < 4; i++) s += Math.random();
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kana = s => String(s == null ? '' : s).trim().toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60)).replace(/[\s　]/g, '');
 const AR = { u: '↑', d: '↓', l: '←', r: '→' };
+// 予備の通信経路：公開のメッセージ中継サーバー（MQTT over WebSocket）。直接つながらないネットワークでも通る
+const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
+function mqttLink(url, onOpen, onMsg, onClose) { // 必要最小限のMQTTクライアント（接続・購読・送信・生存確認のみ）
+  if (window.__fakeMqtt) return window.__fakeMqtt(url, onOpen, onMsg, onClose);
+  const te = new TextEncoder(), td = new TextDecoder(), api = { ok: false }; let ws, buf = new Uint8Array(0), ping = 0;
+  const str = s => { const b = te.encode(s); return [b.length >> 8, b.length & 255, ...b]; };
+  const pkt = (h, body) => { const len = []; let n = body.length; do { let d = n % 128; n = Math.floor(n / 128); if (n) d |= 128; len.push(d); } while (n); const a = new Uint8Array(1 + len.length + body.length); a[0] = h; a.set(len, 1); a.set(body, 1 + len.length); return a; };
+  try { ws = new WebSocket(url, 'mqtt'); } catch (e) { setTimeout(() => onClose && onClose(false), 0); return api; }
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => ws.send(pkt(0x10, [...str('MQTT'), 4, 2, 0, 60, ...str('ffp' + Math.random().toString(36).slice(2, 12))]));
+  ws.onmessage = e => {
+    const inb = new Uint8Array(e.data), nb = new Uint8Array(buf.length + inb.length); nb.set(buf); nb.set(inb, buf.length); buf = nb;
+    for (;;) {
+      if (buf.length < 2) break; let mult = 1, len = 0, i = 1, d; do { if (i >= buf.length) return; d = buf[i++]; len += (d & 127) * mult; mult *= 128; } while (d & 128);
+      if (buf.length < i + len) break; const type = buf[0] >> 4, qos = (buf[0] >> 1) & 3, body = buf.subarray(i, i + len);
+      if (type === 2) { if (body[1] === 0) { api.ok = true; ping = setInterval(() => { try { ws.send(new Uint8Array([0xC0, 0])); } catch (er) {} }, 30000); if (onOpen) onOpen(); } else ws.close(); }
+      else if (type === 3) { const tl = (body[0] << 8) | body[1], topic = td.decode(body.subarray(2, 2 + tl)); try { onMsg(topic, td.decode(body.subarray(2 + tl + (qos ? 2 : 0)))); } catch (er) { console.error(er); } }
+      buf = buf.slice(i + len);
+    }
+  };
+  ws.onclose = () => { const was = api.ok; api.ok = false; clearInterval(ping); if (onClose) onClose(was); }; ws.onerror = () => {};
+  api.pub = (topic, s) => { if (!api.ok) return; const t = str(topic), b = te.encode(s), body = new Uint8Array(t.length + b.length); body.set(t); body.set(b, t.length); try { ws.send(pkt(0x30, body)); } catch (e) {} };
+  api.sub = topic => { if (api.ok) { try { ws.send(pkt(0x82, [0, 1, ...str(topic), 0])); } catch (e) {} } };
+  api.close = () => { try { ws.close(); } catch (e) {} };
+  return api;
+}
 // 端末どうしをつなぐための中継サーバー一覧（別々のネットワークでもつながりやすくする）
 const ICE = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }, { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }] };
 
@@ -272,24 +303,52 @@ function genCode() { const s = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; f
 function setNet(t) { $('#net').textContent = t; }
 function showJoin() {
   $('#code').textContent = code;
-  const url = location.origin + location.pathname + '?room=' + code;
+  const url = joinURL();
   $('#url').textContent = url;
   if (location.protocol === 'file:') { $('#qr').textContent = 'ファイルを直接開いているため、スマホからは参加できません'; return; }
   try { const q = qrcode(0, 'M'); q.addData(url); q.make(); $('#qr').innerHTML = q.createSvgTag({ cellSize: 5, margin: 2, scalable: true }); }
   catch (e) { $('#qr').textContent = 'QRを作れませんでした。URLを入力して参加してください'; }
 }
+let relay = null, relayIdx = 0, p2pOK = false; const vconns = {};
+/* リモートモード：画面共有の遅れ（0.3〜1秒）で不公平になるゲームと、同じ部屋にいる前提のゲームを除外する */
+let remote = false;
+const REMOTE_NG = new Set(['strap', 'tray', 'sumo', 'daruma', 'homerun', 'pose', 'gun', 'rhythm', 'chicken', 'stack', 'voice', 'tag', 'pong', 'fingers', 'sync', 'ring']);
+const okG = g => !remote || !REMOTE_NG.has(g.id);
+function joinURL() { return location.origin + location.pathname + '?room=' + code + (relay ? '&b=' + relayIdx : ''); }
+function netState() { setNet((relay || p2pOK ? 'スマホの参加を待っています' : '通信サーバーに接続中…') + `（直接通信：${p2pOK ? '準備OK' : '未接続'}／中継：${relay ? '準備OK' : '未接続'}）`); }
+function vconn(cid) { // 中継経由のスマホ1台を表す接続。直接通信が開いていればそちらを優先して送る
+  if (!/^[a-z0-9]{6,16}$/.test(cid)) return null;
+  return vconns[cid] || (vconns[cid] = { cid, open: true, p2p: null, send(m) { if (this.p2p && this.p2p.open) { try { this.p2p.send(m); return; } catch (e) {} } if (relay) relay.pub(`ffp2/${code}/dn/${cid}`, JSON.stringify(m)); }, close() {} });
+}
+function openRelay(i) {
+  i = (i || 0) % BROKERS.length; let opened = false;
+  const r = mqttLink(BROKERS[i], () => { opened = true; relay = r; relayIdx = i; r.sub(`ffp2/${code}/up/+`); showJoin(); netState(); },
+    (topic, s) => { const vc = vconn(topic.split('/').pop()); if (!vc) return; let d; try { d = JSON.parse(s); } catch (e) { return; } onData(vc, d); },
+    () => { if (relay === r) { relay = null; netState(); } setTimeout(() => openRelay(opened ? i : i + 1), opened ? 2000 : 300); });
+  setTimeout(() => { if (!opened) r.close(); }, 7000);
+}
 function openPeer() {
   if (location.protocol === 'file:') $('#note').textContent = 'いまはファイルを直接開いています。スマホから参加するには、GitHub PagesなどのHTTPSのサイトに置いて開いてください。CPU相手の動作確認はこのままできます。';
   else if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') $('#note').textContent = 'HTTPSではないため、スマホのセンサー・マイク・カメラが使えません（タッチ操作になります）。';
-  if (typeof Peer === 'undefined') { setNet('通信ライブラリを読み込めませんでした（インターネット接続を確認）。CPU対戦は可能です。'); showJoin(); return; }
+  showJoin(); netState();
+  if (!openPeer.relay) { openPeer.relay = 1; openRelay(0); }
+  if (typeof Peer === 'undefined') return;
   peer = new Peer(PREFIX + code, { debug: 1, config: ICE });
-  peer.on('open', () => { setNet('スマホの参加を待っています'); showJoin(); });
-  peer.on('error', e => { if (e.type === 'unavailable-id') { peer.destroy(); code = genCode(); openPeer(); } else if (e.type !== 'peer-unavailable') setNet('通信エラー：' + e.type + '（自動で再接続します）'); });
-  peer.on('disconnected', () => { setNet('通信サーバーとの接続が切れました。再接続中…（この間はスマホから参加できません）'); try { peer.reconnect(); } catch (e) {} });
+  peer.on('open', () => { p2pOK = true; netState(); showJoin(); });
+  peer.on('error', e => { if (e.type === 'unavailable-id') { peer.destroy(); code = genCode(); if (relay) relay.sub(`ffp2/${code}/up/+`); openPeer(); } });
+  peer.on('disconnected', () => { p2pOK = false; netState(); try { peer.reconnect(); } catch (e) {} });
   if (!openPeer.iv) openPeer.iv = setInterval(() => { if (peer && peer.disconnected && !peer.destroyed) { try { peer.reconnect(); } catch (e) {} } }, 3000); // 切れたままにしない
   peer.on('connection', conn => {
-    conn.on('data', d => { try { onData(conn, d); } catch (e) { console.error(e); } });
-    conn.on('close', () => { const p = players.find(q => q.conn === conn) || spects.find(q => q.conn === conn); if (p) { p.connected = false; renderLobby(); } });
+    conn.on('data', d => {
+      try {
+        if (d && d.t === 'link') { const vc = vconn(String(d.cid)); if (vc) { conn.vc = vc; vc.p2p = conn; renderLobby(); } return; } // 中継で参加済みのスマホが、直接通信に切り替え
+        onData(conn.vc || conn, d);
+      } catch (e) { console.error(e); }
+    });
+    conn.on('close', () => {
+      if (conn.vc) { if (conn.vc.p2p === conn) conn.vc.p2p = null; renderLobby(); return; } // 直接通信が切れても中継で続行
+      const p = players.find(q => q.conn === conn) || spects.find(q => q.conn === conn); if (p) { p.connected = false; renderLobby(); }
+    });
   });
 }
 function newPlayer(name, isBot) {
@@ -364,7 +423,7 @@ function renderLobby() {
   for (let i = 0; i < MAXP; i++) {
     const p = players[i];
     if (!p) { li.push('<li class="empty">参加待ち</li>'); continue; }
-    const st = p.isBot ? 'CPU' : (p.connected ? 'スマホ接続中' : '切断中');
+    const st = p.isBot ? 'CPU' : (p.connected ? 'スマホ接続中' + (p.conn && p.conn.cid ? (p.conn.p2p && p.conn.p2p.open ? '（直接）' : '（中継）') : '（直接）') : '切断中');
     li.push(`<li style="background:${p.color}">${esc(p.name)}<small>${st}</small>${p.isBot ? `<button class="x" type="button" data-id="${p.id}" aria-label="削除">×</button>` : ''}</li>`);
   }
   $('#plist').innerHTML = li.join('');
@@ -394,7 +453,7 @@ function openMenu() {
   const cats = ['すべて', ...new Set(GAMES.map(g => g.cat))]; let cur = 'すべて';
   const draw = () => {
     $('#cats').innerHTML = cats.map(c => `<button type="button" class="${c === cur ? 'on' : ''}" data-c="${c}">${c}</button>`).join('');
-    $('#glist').innerHTML = GAMES.filter(g => cur === 'すべて' || g.cat === cur).map(g => `<button type="button" data-g="${g.id}" ${g.min > players.length ? 'disabled' : ''}>${esc(g.name)}<small>${g.cat}・${TYPEN[g.type]}${g.min > 2 ? '・' + g.min + '人〜' : ''}</small></button>`).join('');
+    $('#glist').innerHTML = GAMES.filter(g => cur === 'すべて' || g.cat === cur).map(g => `<button type="button" data-g="${g.id}" ${g.min > players.length || !okG(g) ? 'disabled' : ''}>${esc(g.name)}<small>${g.cat}・${TYPEN[g.type]}${g.min > 2 ? '・' + g.min + '人〜' : ''}${okG(g) ? '' : '・リモート不向き'}</small></button>`).join('');
   };
   draw();
   $('#cats').onclick = e => { const b = e.target.closest('button'); if (b) { cur = b.dataset.c; draw(); } };
@@ -631,7 +690,7 @@ async function playMG(def, ps, o) {
   return r;
 }
 function pickGame(ps, f) {
-  let c = GAMES.filter(g => g.min <= ps.length && (!f || f(g))); if (!c.length) c = GAMES.filter(g => g.min <= ps.length);
+  let c = GAMES.filter(g => g.min <= ps.length && okG(g) && (!f || f(g))); if (!c.length) c = GAMES.filter(g => g.min <= ps.length && okG(g));
   let d = c.filter(g => !played.includes(g.id));
   if (!d.length) { c.forEach(g => { const i = played.indexOf(g.id); if (i >= 0) played.splice(i, 1); }); d = c; }
   const g = pick(d); played.push(g.id); return g;
@@ -639,7 +698,7 @@ function pickGame(ps, f) {
 async function drawGame(ps, f, title) { // 抽選ルーレットの演出つき
   if (!f) { const r = Math.random(), t = r < 0.68 ? 'ffa' : r < 0.8 ? 'team' : r < 0.9 ? '1vN' : 'coop'; f = g => g.type === t; }
   const g = pickGame(ps, f);
-  const others = shuffle(GAMES.filter(x => x !== g && x.min <= ps.length)).slice(0, 4);
+  const others = shuffle(GAMES.filter(x => x !== g && x.min <= ps.length && okG(x))).slice(0, 4);
   const items = shuffle([g, ...others]); const end = items.indexOf(g);
   roul = { title: title || 'ミニゲーム抽選', items: items.map(x => x.name), i: 0 };
   const steps = 15 + end - (15 % items.length) + items.length;
@@ -781,6 +840,15 @@ function startHost() {
   $('#map').innerHTML = MAPS.map((m, i) => `<option value="${i}">${m.name}</option>`).join('');
   $('#addbot').onclick = () => { if (players.length >= MAXP) return; players.push(newPlayer(BOTN.find(b => !players.some(p => p.name === b)) || 'CPU', true)); renderLobby(); };
   $('#plist').onclick = e => { const b = e.target.closest('.x'); if (!b) return; const i = players.findIndex(p => p.id === +b.dataset.id); if (i >= 0) players.splice(i, 1); renderLobby(); };
+  const setRemote = v => { remote = v; $('#remote').checked = v; $('#rhint').hidden = !v; try { localStorage.setItem('ffp-remote', v ? '1' : ''); } catch (e) {} };
+  try { setRemote(localStorage.getItem('ffp-remote') === '1'); } catch (e) {}
+  $('#remote').onchange = e => setRemote(e.target.checked);
+  $('#copyurl').onclick = async () => {
+    const b = $('#copyurl'), u = joinURL();
+    try { await navigator.clipboard.writeText(u); b.textContent = 'コピーしました！'; }
+    catch (e) { const r = document.createRange(); r.selectNodeContents($('#url')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); b.textContent = 'URLを選択しました。Ctrl+Cでコピー'; }
+    setTimeout(() => { b.textContent = '参加URLをコピー'; }, 2500);
+  };
   $('#mode').onclick = e => {
     const b = e.target.closest('button'); if (!b) return; mode = b.dataset.m;
     document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x === b));
@@ -803,7 +871,7 @@ function startHost() {
   addEventListener('keydown', e => { if (e.code === 'Space' && B && B.turnP && B.turnP.roll && !B.turnP.isBot) { e.preventDefault(); B.turnP.roll(); } });
   code = genCode(); renderLobby(); openPeer();
   requestAnimationFrame(frame);
-  window.__host = { players, GAMES, get scene() { return scene; }, get mg() { return mg; }, get B() { return B; },
+  window.__host = { players, GAMES, played, get scene() { return scene; }, get mg() { return mg; }, get B() { return B; },
     showHL: () => { hl('人気No.1の絵「ネコ」', 'ポチ（3票）', scrib()); hlCur = HL[HL.length - 1]; scene = 'hl'; },
     showHL2: () => { hlCur = { title: '以心伝心「夏といえば？」', body: 'ゆうきだけ「そうめん」と答えた', st: null }; scene = 'hl'; },
     fakeJoin: name => { onData({ open: true, send() {} }, { t: 'join', name }); return players.length; },
@@ -2581,7 +2649,8 @@ function startPad() {
   document.body.classList.add('pad'); $('#pad').hidden = false;
   let peer = null, conn = null, cur = null, clean = [], myName = '', rcode = (params.get('room') || '').toUpperCase(), useTouch = false, mot = 0, lastShake = 0, pa = null, micS = null, camS = null, AC2 = null;
   const grav = { x: 0, y: 0, z: 1, ok: false }, zero = { x: 0, y: 0 };
-  const send = m => { if (conn && conn.open) { try { conn.send(m); } catch (e) {} } };
+  const cid = Math.random().toString(36).slice(2, 12).padEnd(8, 'x'); let rel = null, joined = false, runId = 0;
+  const send = m => { if (conn && conn.open) { try { conn.send(m); return; } catch (e) {} } if (rel && rel.ok) rel.pub(`ffp2/${rcode}/up/${cid}`, JSON.stringify(m)); }; // 直接通信が開いていればそちら、なければ中継
   const inS = (k, v) => send({ t: 'in', k, v });
   const every = (ms, f) => { const i = setInterval(f, ms); clean.push(() => clearInterval(i)); };
   const vib = ms => { if (navigator.vibrate) try { navigator.vibrate(ms); } catch (e) {} };
@@ -2623,7 +2692,7 @@ function startPad() {
     setTimeout(() => { if (!grav.ok) useTouch = true; }, 1500);
   }
   async function keepAwake() { try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch (e) {} }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && conn) keepAwake(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && joined) keepAwake(); });
 
   /* 接続 */
   $('#jgo').onclick = () => {
@@ -2634,35 +2703,38 @@ function startPad() {
     try { AC2 = AC2 || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
     askSensors(); keepAwake(); connect();
   };
-  function connect(tries) {
-    tries = tries || 0;
-    if (typeof Peer === 'undefined') return setJ('通信ライブラリを読み込めませんでした。電波を確認して、ページを開き直してください');
-    if (!tries) setJ('接続中…'); if (peer) { try { peer.destroy(); } catch (e) {} }
-    const lost = () => { if (!$('#pv').hidden) render({ w: 'lost', big: '接続が切れました', text: '同じなまえで入り直すと、続きから参加できます' }); };
-    peer = new Peer({ debug: 1, config: ICE }); const me = peer;
-    peer.on('open', () => {
-      conn = peer.connect(PREFIX + rcode, { reliable: true, serialization: 'json' }); const c = conn;
-      // PCは見つかったが、端末どうしの通信がなかなか開かない場合（ネットワークの相性）
-      const t1 = setTimeout(() => { if (!c.open && peer === me) setJ('PCは見つかりました。接続に時間がかかっています…'); }, 6000);
-      const t2 = setTimeout(() => { if (!c.open && peer === me) { const st = c.peerConnection ? c.peerConnection.iceConnectionState : '不明'; setJ(`PCは見つかりましたが、つながりませんでした（状態：${st}）。スマホをPCと同じWi-Fiにつないで、もう一度「参加する」を押してください`); } }, 25000);
-      c.on('open', () => { clearTimeout(t1); clearTimeout(t2); c.send({ t: 'join', name: myName, face: face.get() }); });
+  const lost = () => { if (!$('#pv').hidden) render({ w: 'lost', big: '接続が切れました', text: '同じなまえで入り直すと、続きから参加できます' }); };
+  const joinMsg = () => ({ t: 'join', name: myName, face: face.get() });
+  function openRelayPad(my, i, n) { // 中継サーバーを順に試す
+    if (n <= 0 || runId !== my) return; const idx = i % BROKERS.length; let got = false;
+    const r = mqttLink(BROKERS[idx], () => { if (runId !== my) return r.close(); rel = r; r.sub(`ffp2/${rcode}/dn/${cid}`); if (!joined) r.pub(`ffp2/${rcode}/up/${cid}`, JSON.stringify(joinMsg())); },
+      (topic, m) => { got = true; let d; try { d = JSON.parse(m); } catch (e) { return; } onMsg(d); },
+      () => { if (rel === r) rel = null; if (runId !== my) return; if (joined && got) setTimeout(() => openRelayPad(my, idx, 99), 2000); else if (joined && !(conn && conn.open)) { showView(); lost(); } });
+    setTimeout(() => { if (runId === my && !got && !joined) { r.close(); openRelayPad(my, idx + 1, n - 1); } }, 5000);
+  }
+  function startP2P(my, tries) { // 直接通信（つながれば遅延が小さい）。失敗しても中継で遊べる
+    const pe = new Peer({ debug: 1, config: ICE }); peer = pe;
+    pe.on('open', () => {
+      if (runId !== my) return; const c = pe.connect(PREFIX + rcode, { reliable: true, serialization: 'json' });
+      c.on('open', () => { if (runId !== my) return; conn = c; c.send({ t: 'link', cid }); if (!joined) c.send(joinMsg()); });
       c.on('data', d => { try { onMsg(d); } catch (e) { console.error(e); } });
-      c.on('close', () => { if (conn === c) { showView(); lost(); } });
+      c.on('close', () => { if (conn === c) { conn = null; if (runId === my && !(rel && rel.ok)) { showView(); lost(); } } });
     });
-    peer.on('error', e => {
-      if (peer !== me) return;
-      if (e.type === 'peer-unavailable') { // PC側のルームが通信サーバー上に見つからない
-        if (tries < 3) { setJ(`ルームを探しています…（${tries + 2}回目）`); setTimeout(() => { if (peer === me) connect(tries + 1); }, 2500); return; }
-        setJ(`ルーム「${rcode}」が見つかりません。PCの画面のルームコードと同じか確認してください。PCのページを開き直すとコードが変わるので、QRを読み直してください`);
-      } else setJ('通信エラー：' + e.type + '。電波を確認して、もう一度「参加する」を押してください');
-      lost();
-    });
+    pe.on('error', e => { if (runId === my && e.type === 'peer-unavailable' && tries < 3) setTimeout(() => { if (runId === my && !(conn && conn.open)) { try { pe.destroy(); } catch (_) {} startP2P(my, tries + 1); } }, 2500); });
+  }
+  function connect() {
+    const my = ++runId; joined = false; conn = null; setJ('接続中…');
+    if (peer) { try { peer.destroy(); } catch (e) {} peer = null; } if (rel) { rel.close(); rel = null; }
+    openRelayPad(my, +params.get('b') || 0, BROKERS.length);
+    if (typeof Peer !== 'undefined' && !params.has('nop2p')) startP2P(my, 0);
+    setTimeout(() => { if (runId === my && !joined) setJ('まだつながりません。引き続き接続を試しています…'); }, 8000);
+    setTimeout(() => { if (runId === my && !joined) setJ(`つながりませんでした。ルームコード「${rcode}」がPCの画面と同じか確認して、もう一度「参加する」を押してください（PCのページを開き直すとコードが変わります）`); }, 22000);
   }
   function showView() { $('#pj').hidden = true; $('#pv').hidden = false; }
   function onMsg(d) {
     if (!d || typeof d !== 'object') return;
     if (d.st) $('#pstat').textContent = `スター${d.st.s} コイン${d.st.c}${d.st.i ? ' 道具' + d.st.i : ''}`;
-    if (d.t === 'welcome') { showView(); myName = d.name; document.documentElement.style.setProperty('--pc', d.color); $('#pname').textContent = d.name; }
+    if (d.t === 'welcome') { joined = true; showView(); myName = d.name; document.documentElement.style.setProperty('--pc', d.color); $('#pname').textContent = d.name; }
     else if (d.t === 'ui') render(d);
     else if (d.t === 'upd') upd(d);
     else if (d.t === 'calib') { zero.x = grav.x; zero.y = grav.y; }
@@ -2782,7 +2854,7 @@ function startPad() {
       const te = () => { tc.x = tc.y = 0; };
       m.addEventListener('pointerdown', tp); m.addEventListener('pointermove', e => { if (e.buttons || e.pointerType === 'touch') tp(e); }); m.addEventListener('pointerup', te); m.addEventListener('pointercancel', te);
       const val = () => tiltIn() || tc;
-      every(50, () => { const v = val(); send({ t: 'tilt', x: +v.x.toFixed(3), y: d.axes === 1 ? 0 : +v.y.toFixed(3) }); });
+      let tk = 0; every(50, () => { if (!(conn && conn.open) && (tk++ % 2)) return; const v = val(); send({ t: 'tilt', x: +v.x.toFixed(3), y: d.axes === 1 ? 0 : +v.y.toFixed(3) }); }); // 中継のときは送信回数を半分に
       const loop = () => { const v = val(); ball.style.transform = `translate(${v.x * (m.clientWidth / 2 - 30)}px,${d.axes === 1 ? 0 : -v.y * (m.clientHeight / 2 - 30)}px)`; raf = requestAnimationFrame(loop); }; loop(); clean.push(() => cancelAnimationFrame(raf));
       if (useTouch) { const p = document.createElement('p'); p.className = 'ptext'; p.textContent = 'タッチ操作：枠の中をなぞる'; el.appendChild(p); }
       swapBtn(el);
@@ -2806,7 +2878,7 @@ function startPad() {
     if (d.secret) { const s = $('#usec'), on = e => { e.preventDefault(); s.textContent = d.secret; }, off = () => { s.textContent = '長押しで ひみつを見る'; }; s.addEventListener('pointerdown', on); s.addEventListener('pointerup', off); s.addEventListener('pointercancel', off); s.addEventListener('pointerleave', off); }
     if (d.btn) { const b = $('#ubtn'); b.onclick = () => { inS('btn', 1); b.disabled = true; b.textContent = 'OK！ 待っています'; }; }
   }
-  window.__pad = { render, onMsg };
+  window.__pad = { render, onMsg, link: () => ({ joined, p2p: !!(conn && conn.open), relay: !!(rel && rel.ok) }) };
 }
 
 /* ---------- 起動 ---------- */
