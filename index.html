@@ -15,7 +15,8 @@
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{margin:0;height:100%;font-family:var(--font);background:#16233a;color:#16233a}
-#cv{position:fixed;inset:0;display:block}
+#gl,#cv{position:fixed;inset:0;display:block;width:100%;height:100%}
+#gl{background:#5fd0ff}
 .overlay{position:fixed;inset:0;display:flex;padding:12px;background:rgba(14,40,80,.45);overflow:auto}
 .card{background:#fff;border-radius:28px;padding:18px 28px;width:min(820px,100%);box-shadow:0 12px 0 rgba(0,0,0,.15);margin:auto}
 .card.wide{width:min(1100px,100%)}
@@ -110,6 +111,7 @@ button.small{font-size:14px;min-height:40px;background:rgba(255,255,255,.25);col
 </head>
 <body>
 <div id="host" hidden>
+  <canvas id="gl"></canvas>
   <canvas id="cv"></canvas>
   <button id="mute" class="mute" type="button">音 ON</button>
   <div id="lobby" class="overlay">
@@ -492,39 +494,21 @@ function pods(M, o) {
     ctx.save(); ctx.translate(x, y + 140); ctx.scale(f, f); ctx.translate(-x, -(y + 140)); // 人数が多いときは全体を縮める
     ctx.globalAlpha = q.out ? 0.4 : 1;
     ctx.fillStyle = q.p.color; rr(x - 95, y + 30, 190, 110, 18); ctx.fill();
-    avatar(q.p, x, y, 36);
+    if (!o.noav) avatar(q.p, x, y, 36);
     txt(q.p.name, x, y + 62, 20, '#fff');
     const sc = o.sc ? o.sc(q, i) : q.s;
     if (sc != null && sc !== '') txt(String(sc), x, y + 94, 26, '#fff');
     if (M.def.type !== 'ffa' && M.def.type !== 'coop' && q.tm != null) txt(M.def.type === '1vN' ? (q.tm ? '' : '1人側') : (q.tm ? 'B' : 'A'), x + 70, y + 46, 16, '#fff');
     ctx.globalAlpha = 1;
-    const b = o.bub && o.bub(q, i);
-    if (b != null && b !== '') bubble(x, y - 78, String(b), o.bc && o.bc(q, i));
-    else if (o.ok && o.ok(q, i)) bubble(x, y - 78, 'OK', '#22b860');
+    const b = o.bub && o.bub(q, i), bY = o.noav ? ((534 - 148 * f) - (y + 140)) / f + (y + 140) : y - 78; // 3Dキャラがいるときは頭の上に出す
+    if (b != null && b !== '') bubble(x, bY, String(b), o.bc && o.bc(q, i));
+    else if (o.ok && o.ok(q, i)) bubble(x, bY, 'OK', '#22b860');
     ctx.restore();
   });
 }
 function fitX(i, n, W, cy, fn) { // 幅Wの絵を、i番目の人の位置に、はみ出さない大きさで描く
   const x = xs(i, n), f = Math.min(1, (1280 / (n + 1) - 12) / W);
   ctx.save(); ctx.translate(x, cy); ctx.scale(f, f); ctx.translate(-x, -cy); fn(x); ctx.restore();
-}
-function stage(M, lines, o) {
-  o = o || {}; bg(...(o.bg || ['#cfe8ff', '#eef7ff'])); hud(M); panel(lines, o.py || 280);
-  pods(M, Object.assign({ ok: q => M.ph === 'ask' && q.a !== undefined }, o));
-}
-function gallery(M, o) {
-  o = o || {}; const n = M.ps.length, w = Math.min(250, 1100 / n - 24), y = o.y || 170;
-  M.ps.forEach((q, i) => {
-    const x = xs(i, n) - w / 2;
-    ctx.fillStyle = 'rgba(0,0,0,.15)'; rr(x, y + 6, w, w, 18); ctx.fill(); ctx.fillStyle = '#fff'; rr(x, y, w, w, 18); ctx.fill();
-    if (o.hide && o.hide(q)) txt('？', x + w / 2, y + w / 2, 80, '#c5cede'); else strokes(q.in.draw, x + 10, y + 10, w - 20, '#16233a', 4);
-    const l = o.label && o.label(q, i); if (l) txt(l, x + w / 2, y + w + 28, 26, '#16233a', 'center', '#fff');
-  });
-}
-function lanes(M, fn, c1, c2) {
-  const n = M.ps.length, lh = 600 / n;
-  M.ps.forEach((q, i) => { const y0 = 100 + i * lh; ctx.fillStyle = i % 2 ? (c2 || '#f6d7a8') : (c1 || '#f2cc94'); ctx.fillRect(0, y0, 1280, lh); });
-  M.ps.forEach((q, i) => { const y0 = 100 + i * lh; fn(q, y0, lh, y0 + lh / 2, i); txt(q.p.name, 16, y0 + 24, 20, q.p.color, 'left', '#fff'); });
 }
 function person(x, y, ang, color, sc) {
   sc = sc || 1; ctx.save(); ctx.translate(x, y); ctx.rotate(ang); ctx.scale(sc, sc);
@@ -573,6 +557,7 @@ function newM(def, ps) {
   M.ui = () => U('wait', def.name, 'PCの画面を見てね');
   M.on = () => {}; M.up = () => {}; M.draw = () => {};
   def.make(M);
+  if (DRAW3D[def.id]) M.draw = T => DRAW3D[def.id](M, T); // 3Dの画面に差し替え
   return M;
 }
 /* ラウンド制（出題→スマホで回答→結果）の共通エンジン */
@@ -662,8 +647,7 @@ async function drawGame(ps, f, title) { // 抽選ルーレットの演出つき
 
 /* ---------- 画面の描画（共通部分） ---------- */
 function drawIntro() {
-  const d = mg.def; bg('#3d7bff', '#22b8cf');
-  ctx.fillStyle = 'rgba(255,255,255,.12)'; for (let i = 0; i < 9; i++) { ctx.beginPath(); ctx.arc((i * 173 + TT * 30) % 1400 - 60, 90 + (i * 97) % 600, 40 + (i * 31) % 50, 0, TAU); ctx.fill(); }
+  const d = mg.def; plaza(mg.ps.map(q => q.p), { sky: '#3d7bff', sky2: '#9be3f2', hop: countdown > 0 });
   ctx.fillStyle = 'rgba(0,0,0,.2)'; rr(170, 118, 940, 500, 36); ctx.fill();
   ctx.fillStyle = '#fff'; rr(170, 110, 940, 500, 36); ctx.fill();
   txt(`ミニゲーム（${TYPEN[d.type]}）`, 640, 152, 22, '#ff4d5e');
@@ -694,18 +678,6 @@ function drawResult() {
     coinIcon(812, y, 12); txt(`+${a.coins}`, 832, y, Math.min(24, rh * 0.4), '#f5a300', 'left');
   });
   if (results.hit && results.hit.length && results.shown >= n) txt('観戦者の予想的中：' + results.hit.join('・'), 640, y0 + h - 30, 20, '#22b860');
-}
-function drawFinale() {
-  bg('#3b2a4a', '#16233a'); const R = fin.rows, n = R.length, rh = Math.min(92, 484 / n);
-  txt('結果発表', 640, 70, 56, '#ffcc00', 'center', '#16233a');
-  R.forEach((r, i) => {
-    if (i < n - fin.shown) return; const y = 136 + i * rh + rh / 2, top = r.place === 1;
-    ctx.fillStyle = top ? '#ffcc00' : 'rgba(255,255,255,.92)'; rr(240, y - rh * 0.42, 800, rh * 0.84, 20); ctx.fill();
-    txt(r.place + '位', 270, y, Math.min(40, rh * 0.5), top ? '#e60012' : '#16233a', 'left');
-    avatar(r.p, 430, y, Math.min(30, rh * 0.34)); txt(r.p.name, 480, y, Math.min(34, rh * 0.42), '#16233a', 'left');
-    txt(B ? `スター ${r.p.stars}　コイン ${r.p.coins}` : `${r.p.coins}ポイント`, 1010, y, Math.min(26, rh * 0.34), '#16233a', 'right', null, 500);
-  });
-  if (fin.spec) txt(fin.spec, 640, 116, 20, '#fff');
 }
 function drawHL() {
   bg('#0b7285', '#15aabf'); txt('ハイライト', 640, 64, 44, '#fff', 'center', '#16233a'); if (!hlCur) return;
@@ -755,7 +727,7 @@ function frame(now) {
   NOW = now; const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now; TT = now / 1000;
   try {
     for (let k = 0; k < SPEED; k++) step(SPEED > 1 ? 1 / 60 : dt);
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#16233a'; ctx.fillRect(0, 0, cv.width, cv.height);
+    G3.begin(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.setTransform(S, 0, 0, S, OX, OY);
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, 1280, 720); ctx.clip();
     if (scene === 'intro' && mg) drawIntro();
@@ -768,11 +740,11 @@ function frame(now) {
     else if ((scene === 'finale' || scene === 'final') && fin) drawFinale();
     else if (B) drawBoard();
     else {
-      bg('#5fd0ff', '#2b8fe6');
+      plaza(players);
       if (scene === 'idle') {
         txt(idleMsg, 640, 150, 54, '#fff', 'center', '#16233a');
         const o = [...players].sort((a, b) => b.coins - a.coins), n = o.length;
-        if (mode === 'rally') o.forEach((p, i) => { const x = xs(i, n); avatar(p, x, 360, 60); txt(p.name, x, 450, 28, '#fff', 'center', '#16233a'); txt(p.coins + 'ポイント', x, 494, 26, '#ffcc00', 'center', '#16233a'); });
+        if (mode === 'rally') o.forEach((p, i) => { const x = xs(i, n); avatar(p, x, 270, 40); txt(p.name, x, 332, 26, '#fff', 'center', '#16233a'); txt(p.coins + 'ポイント', x, 368, 24, '#ffcc00', 'center', '#16233a'); });
       }
     }
     for (let i = floats.length - 1; i >= 0; i--) {
@@ -788,16 +760,19 @@ function frame(now) {
     if (roul) drawRoul();
     drawBanner();
     ctx.restore();
+    G3.render();
   } catch (e) { console.error(e); }
   requestAnimationFrame(frame);
 }
 
 function startHost() {
   $('#host').hidden = false; cv = $('#cv'); ctx = cv.getContext('2d');
+  if (!G3.init($('#gl'))) $('#note').textContent = 'このブラウザは3D表示（WebGL）に対応していないため、背景が表示されません。';
   const resize = () => {
     const d = window.devicePixelRatio || 1; cv.width = innerWidth * d; cv.height = innerHeight * d;
     cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
     S = Math.min(cv.width / 1280, cv.height / 720); OX = (cv.width - 1280 * S) / 2; OY = (cv.height - 720 * S) / 2;
+    G3.resize(cv.width, cv.height, OX, OY, S);
   };
   addEventListener('resize', resize); resize();
   $('#map').innerHTML = MAPS.map((m, i) => `<option value="${i}">${m.name}</option>`).join('');
@@ -887,8 +862,8 @@ function sideAct(p, k, v) { // 他の人の番のあいだの「出目予想」�
   else if (k === 'stamp') { const now = Date.now(), t = STAMPS[v | 0]; if (!t || (p.stT || 0) > now) return; p.stT = now + 1200; B.stamps.push({ p, text: t, t0: NOW }); if (B.stamps.length > 16) B.stamps.shift(); beep(1000, 0.04); }
 }
 function coin(p, n) {
-  const b = p.coins; p.coins = Math.max(0, p.coins + n); const r = p.coins - b, s = B.N[p.pos];
-  floats.push({ x: s.x, y: s.y - 50, text: (r >= 0 ? '+' : '') + r, color: r >= 0 ? '#f5a300' : '#ff4d5e', t0: NOW }); beep(r >= 0 ? 880 : 220, 0.08); return r;
+  const b = p.coins; p.coins = Math.max(0, p.coins + n); const r = p.coins - b, s = bproj(B.N[p.pos], 1.6);
+  floats.push({ x: s[0], y: s[1], text: (r >= 0 ? '+' : '') + r, color: r >= 0 ? '#f5a300' : '#ff4d5e', t0: NOW }); beep(r >= 0 ? 880 : 220, 0.08); return r;
 }
 function moveStar() {
   const c = B.N.map((n, i) => n.t === 'B' && !n.br && i !== B.star && !players.some(p => p.pos === i) ? i : -1).filter(i => i > 0);
@@ -972,7 +947,7 @@ async function move(p, n) {
     if (nx === B.star) await starCheck(p, s === 1);
     if (t === 'S') { coin(p, 5); await sleep(500); }
     if (t === 'X') await shop(p);
-    if (t === 'K' && s > 1 && p.coins > 0) { const k = Math.min(2, p.coins); p.coins -= k; B.bank += k; floats.push({ x: B.N[nx].x, y: B.N[nx].y - 50, text: '預金 ' + k, color: '#c9a227', t0: NOW }); await sleep(350); }
+    if (t === 'K' && s > 1 && p.coins > 0) { const k = Math.min(2, p.coins); p.coins -= k; B.bank += k; floats.push({ x: bproj(B.N[nx], 1.6)[0], y: bproj(B.N[nx], 1.6)[1], text: '預金 ' + k, color: '#c9a227', t0: NOW }); await sleep(350); }
   }
 }
 async function starCheck(p, landing) {
@@ -1073,30 +1048,7 @@ async function bonusStars() {
 
 /* ---------- すごろくの描画 ---------- */
 function drawBoard() {
-  const d = B.d, N = B.N; bg(d.sky[0], d.sky[1]);
-  const poly = () => { ctx.beginPath(); d.loop.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); };
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  poly(); ctx.strokeStyle = d.rim; ctx.lineWidth = 150; ctx.stroke(); ctx.fillStyle = d.land; ctx.fill(); ctx.strokeStyle = d.land; ctx.lineWidth = 116; ctx.stroke();
-  if (d.name.includes('火山')) { const g = ctx.createRadialGradient(640, 560, 10, 640, 560, 90); g.addColorStop(0, '#ffd166'); g.addColorStop(0.6, '#ef476f'); g.addColorStop(1, 'rgba(239,71,111,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(640, 560, 90 + Math.sin(TT * 3) * 6, 0, TAU); ctx.fill(); }
-  ctx.strokeStyle = d.path; ctx.lineWidth = 22;
-  N.forEach(n => n.next.forEach(j => { ctx.beginPath(); ctx.moveTo(n.x, n.y); ctx.lineTo(N[j].x, N[j].y); ctx.stroke(); }));
-  N.forEach((n, i) => {
-    const c = TL[n.t], lit = B.fork && B.fork.includes(i) && Math.floor(TT * 4) % 2;
-    ctx.fillStyle = 'rgba(0,0,0,.25)'; rr(n.x - 27, n.y - 22, 54, 54, 14); ctx.fill();
-    ctx.fillStyle = c[0]; rr(n.x - 27, n.y - 27, 54, 54, 14); ctx.fill();
-    if (lit) { ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 6; rr(n.x - 30, n.y - 30, 60, 60, 16); ctx.stroke(); }
-    const l = c[1]; txt(l, n.x, n.y + 1, l.length >= 3 ? 14 : l.length === 2 ? (n.t === 'B' || n.t === 'R' ? 22 : 18) : 26, n.t === 'S' ? '#ff4d5e' : '#fff');
-    const ly = n.y > 640 ? n.y - 40 : n.y + 40;
-    if (n.t === 'K') txt(B.bank + '枚', n.x, ly, 15, '#fff', 'center', '#16233a');
-    if (n.t === 'V') txt('あと' + B.volc, n.x, ly, 15, '#fff', 'center', '#16233a');
-    if (i === B.star) { const pop = Math.min(1, (NOW - B.starT) / 400); ctx.save(); ctx.translate(n.x, n.y - 50 + Math.sin(TT * 3) * 5); ctx.scale(pop, pop); starIcon(0, 0, 24); ctx.restore(); }
-  });
-  const OFF = [[-15, -12], [15, -12], [-15, 12], [15, 12], [0, -26], [0, 26], [-30, 0], [30, 0]];
-  players.forEach((p, i) => {
-    const s = N[p.pos], hp = clamp((NOW - p.hop) / 260, 0, 1), x = s.x + OFF[i][0], y = s.y + OFF[i][1] - Math.sin(hp * Math.PI) * 28;
-    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(x, s.y + OFF[i][1] + 16, 15, 5, 0, 0, TAU); ctx.fill();
-    avatar(p, x, y, B.turnP === p ? 20 : 16);
-  });
+  const d = B.d, N = B.N; board3D();
   // 上部のプレイヤー情報
   const n = players.length, gap = 8, w = Math.min(296, (1264 - (n - 1) * gap) / n), x0 = 640 - (n * w + (n - 1) * gap) / 2, rk = [...players].sort(rankCmp), wide = w > 220;
   players.forEach((p, i) => {
@@ -1115,18 +1067,12 @@ function drawBoard() {
       starIcon(x + 54, y + 50, 9); txt(String(p.stars), x + 66, y + 51, 17, '#16233a', 'left');
       coinIcon(x + 98, y + 50, 8); txt(String(p.coins), x + 110, y + 51, 17, '#16233a', 'left');
     }
-    const sm = B.stamps.filter(z => z.p === p && NOW - z.t0 < 2000).pop(); if (sm) bubble(x + w / 2, 150, sm.text, p.color);
+    const sm = B.stamps.filter(z => z.p === p && NOW - z.t0 < 2000).pop(); if (sm) { const pm = bproj(N[p.pos], 1.9); bubble(pm[0], pm[1], sm.text, p.color); } // スタンプは自分のコマの上に出す
   });
   let info = `${d.name}　ターン ${Math.max(1, Math.min(B.round, B.rounds))}/${B.rounds}`;
   if (B.turnP) info += `　${B.turnP.name}の番${B.steps ? '　あと' + B.steps + 'マス' : ''}`;
   ctx.font = `800 18px ${FONT}`; const iw = ctx.measureText(info).width + 36;
   ctx.fillStyle = 'rgba(22,35,58,.85)'; rr(640 - iw / 2, 92, iw, 32, 16); ctx.fill(); txt(info, 640, 109, 18, '#fff');
-  if (B.dice) {
-    const k = B.dice.f.length, pw = k * 130 + 60;
-    ctx.fillStyle = 'rgba(22,35,58,.8)'; rr(640 - pw / 2, 330, pw, B.dice.idle ? 200 : 160, 28); ctx.fill();
-    B.dice.f.forEach((f, i) => drawDie(640 + (i - (k - 1) / 2) * 130, 410, 100, f, B.dice.roll ? rand(-0.4, 0.4) : B.dice.idle ? Math.sin(TT * 5 + i) * 0.12 : 0));
-    if (B.dice.idle) txt(isAuto(B.turnP) ? '考え中…' : 'スマホを振ってサイコロ！', 640, 500, 20, '#fff', 'center', null, 500);
-  }
   if (B.help) {
     ctx.fillStyle = 'rgba(14,30,60,.7)'; ctx.fillRect(0, 0, 1280, 720);
     const ts = [...new Set(N.map(n => n.t))].sort((a, b) => 'SBREILCDWKXMTV'.indexOf(a) - 'SBREILCDWKXMTV'.indexOf(b)), rows = Math.ceil((ts.length + 1) / 2), h = 110 + rows * 50;
@@ -1999,7 +1945,7 @@ G({ id: 'sync', type: 'coop', cat: 'チーム・協力', name: 'いっせーの�
       reveal: () => { const t = M.ps.map(q => q.a); M.sp = t.some(v => v === undefined) ? 9 : Math.max(...t) - Math.min(...t); M.hit = M.sp < 0.3; if (M.hit) M.okc++; beep(M.hit ? 900 : 200, 0.2); M.ok = M.okc >= 3; } });
     M.on = (q, k) => { if (k === 'tap') M.answer(q, 1); };
     const ans = M.answer; M.answer = q => { if (M.ph === 'ask' && q.a === undefined) ans(q, 8 - M.pt); };
-    M.draw = () => { const sh = M.ph === 'show'; stage(M, sh ? [[M.sp > 8 ? '押してない人がいる…' : 'ズレ ' + M.sp.toFixed(2) + '秒', 70, '#16233a'], [M.hit ? '成功！' : '失敗…', 60, M.hit ? '#22b860' : '#e60012']] : [['全員同時にタップ！', 50, '#16233a'], [(8 - M.pt).toFixed(1), 100, '#3d7bff'], [M.ps.some(q => isAuto(q.p)) ? 'CPUは3.0秒ちょうどで押す' : '声をかけ合おう', 24]], { bg: ['#e5dbff', '#d0bfff'], sc: () => '', bub: q => sh && q.a !== undefined ? q.a.toFixed(2) + '秒' : null }); txt(`成功 ${M.okc} 回（3回でクリア）`, 640, 500, 28, '#16233a', 'center', '#fff'); };
+    M.draw = () => { const sh = M.ph === 'show'; stage(M, sh ? [[M.sp > 8 ? '押してない人がいる…' : 'ズレ ' + M.sp.toFixed(2) + '秒', 70, '#16233a'], [M.hit ? '成功！' : '失敗…', 60, M.hit ? '#22b860' : '#e60012']] : [['全員同時にタップ！', 50, '#16233a'], [(8 - M.pt).toFixed(1), 100, '#3d7bff'], [M.ps.some(q => isAuto(q.p)) ? 'CPUは3.0秒ちょうどで押す' : '声をかけ合おう', 24]], { bg: ['#e5dbff', '#d0bfff'], sc: () => '', bub: q => sh && q.a !== undefined ? q.a.toFixed(2) + '秒' : null }); txt(`成功 ${M.okc} 回（3回でクリア）`, 640, 104, 26, '#16233a', 'center', '#fff'); };
   } });
 
 G({ id: 'tug', type: 'team', cat: 'チーム・協力', name: '連打綱引き', dur: 15, how: 'チーム対抗の綱引き！画面のボタンをとにかく連打。15秒後に綱が自分のチーム側にあれば勝ち。人数が少ないチームは1回の力が強くなる。', op: 'ボタンを連打',
@@ -2101,6 +2047,518 @@ G({ id: 'ring', cat: '心理戦', min: 3, name: 'だれのスマホが鳴った�
     const ans = M.answer; M.answer = (q, v) => { if (M.rung) ans(q, v); };
     M.draw = () => { const sh = M.ph === 'show'; stage(M, sh ? [[`鳴ったのは ${M.rg.p.name} のスマホ！`, 56, '#e60012'], ['当てた人は2点。鳴った人は、だませた人数分の点', 24]] : M.rung ? [['鳴った！ だれのスマホ？', 60, '#16233a'], ['スマホで投票！', 28]] : [['シーッ…', 90, '#16233a'], ['だれかのスマホから音が鳴る。耳をすませて', 28]], { bg: ['#343a40', '#868e96'], bub: q => sh ? q.v + '票' : null, bc: q => q === M.rg ? '#e60012' : null }); };
   } });
+
+/* =================================================================
+   3D描画エンジン（WebGLを直接使用。外部ライブラリなし）
+   毎フレーム box / ball / cyl などを呼ぶと、その場で3D空間に置かれる。
+   文字やHUDは、これまで通り上に重ねた2Dキャンバスに描く。
+   ================================================================= */
+const G3 = (() => {
+  let gl = null, U = {}, mesh = {}, opq = [], trn = [], st = [], cur = null, VP = null, eye = [0, 0, 1], skyKey = '', cvs = null, vp = [0, 0, 1, 1];
+  const mul = (a, b) => { const o = new Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; return o; };
+  function trs(x, y, z, sx, sy, sz, ry, rx, rz) { // 平行移動 × Y回転 × X回転 × Z回転 × 拡大
+    const cy = Math.cos(ry || 0), sY = Math.sin(ry || 0), cx = Math.cos(rx || 0), sX = Math.sin(rx || 0), cz = Math.cos(rz || 0), sZ = Math.sin(rz || 0);
+    const r00 = cy * cz + sY * sX * sZ, r01 = -cy * sZ + sY * sX * cz, r02 = sY * cx, r10 = cx * sZ, r11 = cx * cz, r12 = -sX, r20 = -sY * cz + cy * sX * sZ, r21 = sY * sZ + cy * sX * cz, r22 = cy * cx;
+    return [r00 * sx, r10 * sx, r20 * sx, 0, r01 * sy, r11 * sy, r21 * sy, 0, r02 * sz, r12 * sz, r22 * sz, 0, x, y, z, 1];
+  }
+  function mk(name, P, N, X) {
+    const m = { n: X.length }, d = new Float32Array(P.length * 2);
+    for (let i = 0; i < P.length / 3; i++) { d[i * 6] = P[i * 3]; d[i * 6 + 1] = P[i * 3 + 1]; d[i * 6 + 2] = P[i * 3 + 2]; d[i * 6 + 3] = N[i * 3]; d[i * 6 + 4] = N[i * 3 + 1]; d[i * 6 + 5] = N[i * 3 + 2]; }
+    m.vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, m.vb); gl.bufferData(gl.ARRAY_BUFFER, d, gl.STATIC_DRAW);
+    m.ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(X), gl.STATIC_DRAW);
+    mesh[name] = m;
+  }
+  function build() {
+    let P = [], N = [], X = [];
+    [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].forEach(n => { // 立方体
+      const u = [n[1], n[2], n[0]], v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]], b = P.length / 3;
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, c]) => { for (let k = 0; k < 3; k++) P.push((n[k] + u[k] * a + v[k] * c) * 0.5); N.push(n[0], n[1], n[2]); });
+      X.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    });
+    mk('box', P, N, X);
+    P = []; N = []; X = []; const S = 20, R = 14; // 球
+    for (let j = 0; j <= R; j++) for (let i = 0; i <= S; i++) { const t = j / R * Math.PI, f = i / S * TAU, x = Math.sin(t) * Math.cos(f), y = Math.cos(t), z = Math.sin(t) * Math.sin(f); P.push(x * 0.5, y * 0.5, z * 0.5); N.push(x, y, z); }
+    for (let j = 0; j < R; j++) for (let i = 0; i < S; i++) { const a = j * (S + 1) + i, b = a + S + 1; X.push(a, b, a + 1, a + 1, b, b + 1); }
+    mk('ball', P, N, X);
+    const tube = (name, rTop) => { // 円柱（rTop=1）と円すい（rTop=0）
+      P = []; N = []; X = [];
+      for (let i = 0; i <= S; i++) { const f = i / S * TAU, c = Math.cos(f), s = Math.sin(f), ny = rTop ? 0 : 0.5, l = Math.hypot(1, ny); P.push(c * 0.5, -0.5, s * 0.5, c * 0.5 * rTop, 0.5, s * 0.5 * rTop); N.push(c / l, ny / l, s / l, c / l, ny / l, s / l); }
+      for (let i = 0; i < S; i++) { const a = i * 2; X.push(a, a + 1, a + 2, a + 2, a + 1, a + 3); }
+      for (const sd of rTop ? [-1, 1] : [-1]) { const b = P.length / 3; P.push(0, sd * 0.5, 0); N.push(0, sd, 0); for (let i = 0; i <= S; i++) { const f = i / S * TAU; P.push(Math.cos(f) * 0.5, sd * 0.5, Math.sin(f) * 0.5); N.push(0, sd, 0); } for (let i = 0; i < S; i++) X.push(b, b + 1 + i, b + 2 + i); }
+      mk(name, P, N, X);
+    };
+    tube('cyl', 1); tube('cone', 0);
+    P = []; N = []; X = []; const T2 = 10, tr = 0.055; // 輪（ドーナツ形）
+    for (let i = 0; i <= S; i++) for (let j = 0; j <= T2; j++) { const f = i / S * TAU, t = j / T2 * TAU, cx = Math.cos(f), cz = Math.sin(f), nx = Math.cos(t) * cx, ny = Math.sin(t), nz = Math.cos(t) * cz; P.push(cx * 0.5 + nx * tr, ny * tr, cz * 0.5 + nz * tr); N.push(nx, ny, nz); }
+    for (let i = 0; i < S; i++) for (let j = 0; j < T2; j++) { const a = i * (T2 + 1) + j, b = a + T2 + 1; X.push(a, b, a + 1, a + 1, b, b + 1); }
+    mk('ring', P, N, X);
+  }
+  const VS = 'attribute vec3 p;attribute vec3 n;uniform mat4 mvp;uniform mat4 m;uniform mat3 nm;varying vec3 vn;varying vec3 vw;void main(){vn=nm*n;vw=(m*vec4(p,1.)).xyz;gl_Position=mvp*vec4(p,1.);}';
+  const FS = 'precision mediump float;uniform vec4 col;uniform vec3 eye;uniform float unlit;varying vec3 vn;varying vec3 vw;void main(){vec3 N=normalize(vn);vec3 L=normalize(vec3(.35,.9,.5));float d=max(dot(N,L),0.);float hemi=.5+.5*N.y;vec3 c=col.rgb*(.46+.2*hemi+.5*d);vec3 V=normalize(eye-vw);c+=pow(1.-max(dot(N,V),0.),3.)*.1;c+=pow(max(dot(reflect(-L,N),V),0.),28.)*.16;gl_FragColor=vec4(mix(c,col.rgb,unlit),col.a);}';
+  function init(c) {
+    cvs = c; gl = c.getContext('webgl', { alpha: true, antialias: true, premultipliedAlpha: false }); if (!gl) return false;
+    const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(o)); return o; };
+    const pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, FS)); gl.bindAttribLocation(pr, 0, 'p'); gl.bindAttribLocation(pr, 1, 'n'); gl.linkProgram(pr); gl.useProgram(pr);
+    for (const k of ['mvp', 'm', 'nm', 'col', 'eye', 'unlit']) U[k] = gl.getUniformLocation(pr, k);
+    gl.enableVertexAttribArray(0); gl.enableVertexAttribArray(1); gl.enable(gl.DEPTH_TEST); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    build(); cam(0, 3, 10, 0, 1, 0, 40); return true;
+  }
+  function cam(ex, ey, ez, tx, ty, tz, fov) {
+    if (api.shake) { ex += rand(-1, 1) * api.shake; ey += rand(-1, 1) * api.shake; }
+    eye = [ex, ey, ez]; let fx = tx - ex, fy = ty - ey, fz = tz - ez; const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+    let sx = -fz, sy = 0, sz = fx; const sl = Math.hypot(sx, sz) || 1; sx /= sl; sz /= sl; // s = f × (0,1,0)
+    const ux = sy * fz - sz * fy, uy = sz * fx - sx * fz, uz = sx * fy - sy * fx;
+    const V = [sx, ux, -fx, 0, sy, uy, -fy, 0, sz, uz, -fz, 0, -(sx * ex + sy * ey + sz * ez), -(ux * ex + uy * ey + uz * ez), fx * ex + fy * ey + fz * ez, 1];
+    const f = 1 / Math.tan(fov * Math.PI / 360), nr = 0.2, fr = 300, Pm = [f / (16 / 9), 0, 0, 0, 0, f, 0, 0, 0, 0, (fr + nr) / (nr - fr), -1, 0, 0, 2 * fr * nr / (nr - fr), 0];
+    VP = mul(Pm, V);
+  }
+  function add(m, M, c, o) { (c[3] < 1 ? trn : opq).push({ m, M: cur ? mul(cur, M) : M, c, u: o && o.unlit ? 1 : 0 }); }
+  function drawList(l) {
+    for (const o of l) {
+      const m = mesh[o.m], M = o.M; gl.bindBuffer(gl.ARRAY_BUFFER, m.vb); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ib);
+      const a = M[0], b = M[1], c = M[2], d = M[4], e = M[5], f = M[6], g = M[8], h = M[9], i = M[10]; // 法線用：左上3×3の余因子行列
+      gl.uniformMatrix3fv(U.nm, false, [e * i - h * f, -(d * i - g * f), d * h - g * e, -(b * i - h * c), a * i - g * c, -(a * h - g * b), b * f - e * c, -(a * f - d * c), a * e - d * b]);
+      gl.uniformMatrix4fv(U.mvp, false, mul(VP, M)); gl.uniformMatrix4fv(U.m, false, M); gl.uniform4fv(U.col, o.c); gl.uniform1f(U.unlit, o.u);
+      gl.drawElements(gl.TRIANGLES, m.n, gl.UNSIGNED_SHORT, 0);
+    }
+  }
+  const api = {
+    ok: false, shake: 0, trs, cam, add,
+    init: c => (api.ok = init(c)),
+    resize(w, h, ox, oy, s) { if (!cvs) return; cvs.width = w; cvs.height = h; vp = [ox, h - oy - 720 * s, 1280 * s, 720 * s]; },
+    sky(a, b) { const k = a + b; if (k !== skyKey && cvs) { skyKey = k; cvs.style.background = `linear-gradient(${a},${b})`; } },
+    begin() { opq = []; trn = []; st = []; cur = null; api.shake = 0; },
+    push(x, y, z, sx, sy, sz, ry, rx, rz) { st.push(cur); const M = trs(x, y, z, sx == null ? 1 : sx, sy == null ? 1 : sy, sz == null ? 1 : sz, ry, rx, rz); cur = cur ? mul(cur, M) : M; },
+    pop() { cur = st.pop() || null; },
+    proj(x, y, z) { const w = VP[3] * x + VP[7] * y + VP[11] * z + VP[15], px = (VP[0] * x + VP[4] * y + VP[8] * z + VP[12]) / w, py = (VP[1] * x + VP[5] * y + VP[9] * z + VP[13]) / w; return [(px * 0.5 + 0.5) * 1280, (1 - (py * 0.5 + 0.5)) * 720, 12 / Math.max(0.5, w), w > 0.2]; },
+    render() {
+      if (!gl || params.has('norender')) return; gl.viewport(0, 0, cvs.width, cvs.height); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      if (!opq.length && !trn.length) return;
+      gl.viewport(vp[0], vp[1], vp[2], vp[3]); gl.uniform3fv(U.eye, eye);
+      gl.disable(gl.BLEND); gl.depthMask(true); drawList(opq); gl.enable(gl.BLEND); gl.depthMask(false); drawList(trn); gl.depthMask(true);
+    },
+  };
+  return api;
+})();
+
+/* ---------- 3Dの部品を置く関数 ---------- */
+const CCACHE = {};
+function c3(c, a) {
+  let v = CCACHE[c];
+  if (!v) {
+    c = String(c);
+    if (c[0] === '#') { const n = parseInt(c.slice(1), 16); v = c.length === 4 ? [((n >> 8) & 15) / 15, ((n >> 4) & 15) / 15, (n & 15) / 15] : [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
+    else { const m = (c.match(/[\d.]+/g) || [0, 0, 0]).map(Number); if (c.startsWith('hsl')) { const h = m[0] / 360, s = m[1] / 100, l = m[2] / 100, q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q, f = t => { t = (t % 1 + 1) % 1; return t < 1 / 6 ? p + (q - p) * 6 * t : t < 0.5 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p; }; v = [f(h + 1 / 3), f(h), f(h - 1 / 3)]; } else v = [m[0] / 255, m[1] / 255, m[2] / 255]; }
+    CCACHE[c] = v;
+  }
+  return [v[0], v[1], v[2], a == null ? 1 : a];
+}
+const prim = (m, x, y, z, sx, sy, sz, col, o) => G3.add(m, G3.trs(x, y, z, sx, sy, sz, o && o.ry, o && o.rx, o && o.rz), c3(col, o && o.a), o);
+const box = (x, y, z, sx, sy, sz, col, o) => prim('box', x, y, z, sx, sy, sz, col, o);
+const ball = (x, y, z, r, col, o) => { const s = (o && o.s) || [1, 1, 1]; prim('ball', x, y, z, r * 2 * s[0], r * 2 * s[1], r * 2 * s[2], col, o); };
+const cyl = (x, y, z, r, h, col, o) => prim('cyl', x, y, z, r * 2, h, r * 2, col, o);
+const cone = (x, y, z, r, h, col, o) => prim('cone', x, y, z, r * 2, h, r * 2, col, o);
+const ring3 = (x, y, z, R, col, o) => prim('ring', x, y, z, R * 2, R * 2, R * 2, col, o);
+const shadow = (x, z, r, y) => prim('cyl', x, (y || 0) + 0.03, z, r * 2, 0.01, r * 2, '#000000', { a: 0.2, unlit: 1 });
+const sky = (a, b) => G3.sky(a, b || a);
+const cam3 = (ex, ey, ez, tx, ty, tz, fov) => G3.cam(ex, ey, ez, tx, ty, tz, fov || 40);
+const P = (x, y, z) => G3.proj(x, y, z);
+function seg(x1, y1, z1, x2, y2, z2, r, col, o) { // 2点を結ぶ棒
+  let dx = x2 - x1, dy = y2 - y1, dz = z2 - z1; const l = Math.hypot(dx, dy, dz) || 0.001; dx /= l; dy /= l; dz /= l;
+  let ax = Math.abs(dy) > 0.99 ? 1 : 0, ay = Math.abs(dy) > 0.99 ? 0 : 1, xx = ay * dz, xy = -ax * dz, xz = ax * dy - ay * dx; const xl = Math.hypot(xx, xy, xz) || 1; xx /= xl; xy /= xl; xz /= xl;
+  const zx = xy * dz - xz * dy, zy = xz * dx - xx * dz, zz = xx * dy - xy * dx, d = r * 2;
+  G3.add('cyl', [xx * d, xy * d, xz * d, 0, dx * l, dy * l, dz * l, 0, zx * d, zy * d, zz * d, 0, (x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2, 1], c3(col, o && o.a), o);
+}
+function strip(a, b, w, y, h, col) { const dx = b[0] - a[0], dz = b[1] - a[1]; box((a[0] + b[0]) / 2, y, (a[1] + b[1]) / 2, Math.hypot(dx, dz), h, w, col, { ry: -Math.atan2(dz, dx) }); } // 地面の帯
+const HAIR = ['#3b2a20', '#1d1d24', '#6b4423', '#2a1c14', '#8a5a2b', '#161616', '#4a3327', '#3d2b1f'];
+function mii(p, x, z, o) { // 人形キャラクター（足元が原点、身長およそ2）
+  o = o || {}; const s = o.s || 1, t = o.t || 0, run = o.run ? Math.sin(t * 10) * 0.7 : 0, col = o.gray ? '#9aa3b2' : p.color, skin = o.gray ? '#c8ccd4' : '#ffd9b8';
+  if (!o.nosh) shadow(x, z, 0.45 * s, o.sy);
+  G3.push(x, o.y || 0, z, s, s, s, o.ry || 0, o.rx || 0, o.rz || 0);
+  for (const sd of [-1, 1]) { G3.push(sd * 0.14, 0.64, 0, 1, 1, 1, 0, sd * run, 0); cyl(0, -0.29, 0, 0.075, 0.58, '#2b3a67'); ball(0, -0.59, 0.06, 0.12, '#16233a', { s: [1, 0.6, 1.5] }); G3.pop(); }
+  ball(0, 1.0, 0, 0.37, col, { s: [1, 1.22, 0.82] });
+  for (const sd of [-1, 1]) {
+    const up = o.arm ? (Array.isArray(o.arm) ? o.arm[sd < 0 ? 0 : 1] : o.arm) : 0;
+    G3.push(sd * 0.35, 1.22, 0, 1, 1, 1, 0, -sd * run * 0.8 - (o.fwd || 0), sd * (0.28 + up * 2.5)); cyl(0, -0.23, 0, 0.07, 0.46, col); ball(0, -0.5, 0, 0.1, skin); G3.pop();
+  }
+  ball(0, 1.74, 0, 0.31, skin);
+  ball(0, 1.87, -0.06, 0.31, o.gray ? '#7d8594' : HAIR[(p.id || 0) % HAIR.length], { s: [1.04, 0.66, 1.04] });
+  ball(-0.11, 1.75, 0.285, 0.036, '#16233a'); ball(0.11, 1.75, 0.285, 0.036, '#16233a');
+  G3.pop();
+}
+function nameAt(p, x, y, z) { const pr = P(x, y, z); tag(p, pr[0], pr[1]); }
+function die3D(x, y, z, s, rx, ry, rz) {
+  G3.push(x, y, z, s, s, s, ry, rx, rz); box(0, 0, 0, 1, 1, 1, '#ffffff');
+  const L = { 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] };
+  const F = [[1, (u, v) => [u, 0.5, v]], [6, (u, v) => [u, -0.5, v]], [2, (u, v) => [u, v, 0.5]], [5, (u, v) => [u, v, -0.5]], [3, (u, v) => [0.5, u, v]], [4, (u, v) => [-0.5, u, v]]];
+  for (const [n, fn] of F) for (const [a, b] of L[n]) { const q = fn(a * 0.27, b * 0.27); ball(q[0], q[1], q[2], n === 1 ? 0.12 : 0.085, n === 1 ? '#ff4d5e' : '#16233a', { s: [1, 1, 1] }); }
+  G3.pop();
+}
+const DIEROT = { 1: [0, 0], 2: [-Math.PI / 2, 0], 5: [Math.PI / 2, 0], 3: [0, Math.PI / 2], 4: [0, -Math.PI / 2], 6: [Math.PI, 0] }; // その目を上に向ける回転 [rx, rz]
+
+/* ---------- 共通の舞台 ---------- */
+const stX = (i, n) => (xs(i, n) - 640) / 98.9; // 画面の横位置 → スタジオ内のX座標
+const stF = n => Math.min(1, (1280 / (n + 1) - 8) / 196);
+function st3(M, o) { // クイズ番組風スタジオ。全員が台の上に並ぶ
+  o = o || {}; const b = o.bg || ['#cfe8ff', '#eef7ff']; sky(b[0], b[1]); cam3(0, 2.6, 10, 0, 2.6, 0, 40);
+  box(0, -0.1, 0, 44, 0.2, 16, o.floor || '#f4f6fa'); box(0, 5, -4.2, 44, 12, 0.4, b[0]);
+  for (let k = -4; k <= 4; k++) box(k * 2.6, 0.01, -1, 0.1, 0.02, 14, '#dde3ec');
+  for (const sd of [-1, 1]) { cyl(sd * 7.6, 3, -3.6, 0.22, 6.4, '#8a94a8'); cone(sd * 7.6, 5.4, -3.4, 0.5, 0.8, '#ffcc00', { rx: Math.PI }); }
+  const n = M.ps.length, f = stF(n);
+  M.ps.forEach((q, i) => {
+    if (o.skip && o.skip(q)) return; const x = stX(i, n); box(x, 0.25, 0, 1.3 * f, 0.5, 0.9, q.p.color);
+    if (q.out) { mii(q.p, x, 0, { y: 0.62, s: 0.75 * f, rz: 1.45, gray: 1, nosh: 1 }); return; }
+    const done = M.ph === 'ask' && q.a !== undefined, a = o.arm ? o.arm(q, i) : 0;
+    mii(q.p, x, 0, { y: 0.5 + (o.jump && o.jump(q, i) ? Math.abs(Math.sin(TT * 9)) * 0.35 : 0), s: 0.75 * f, arm: a || (done ? [0, 1] : 0), nosh: 1 });
+  });
+}
+const pods3 = (M, o) => pods(M, Object.assign({ noav: 1 }, o));
+function stage(M, lines, o) { o = o || {}; st3(M, o); hud(M); panel(lines, o.py || 228); pods(M, Object.assign({ ok: q => M.ph === 'ask' && q.a !== undefined, noav: 1 }, o)); }
+function gallery(M, o) { // 全員の絵をボードに並べる
+  o = o || {}; const n = M.ps.length, w = Math.min(215, 1100 / n - 24), y = o.y || 150;
+  M.ps.forEach((q, i) => {
+    const x = xs(i, n) - w / 2;
+    ctx.fillStyle = 'rgba(0,0,0,.15)'; rr(x, y + 6, w, w, 18); ctx.fill(); ctx.fillStyle = '#fff'; rr(x, y, w, w, 18); ctx.fill();
+    if (o.hide && o.hide(q)) txt('？', x + w / 2, y + w / 2, 80, '#c5cede'); else strokes(q.in.draw, x + 10, y + 10, w - 20, '#16233a', 4);
+    const l = o.label && o.label(q, i); if (l) txt(l, x + w / 2, y + w + 22, 22, '#16233a', 'center', '#fff');
+  });
+}
+function lanes(M, fn, c1, c2, o) { // 横に走るレーン。fn(q, z, レーン幅, i) の中で3Dの物を置く
+  o = o || {}; const n = M.ps.length, lw = Math.min(2.2, 9.5 / n), x1 = o.x1 == null ? 9.7 : o.x1, x0 = -10.9;
+  sky('#8fd8ff', '#e6f6ff'); cam3(-0.6, 6.2 + n * 0.3, 17 + n * 0.4, -0.6, 0.6, 0.3, 41);
+  box(0, -0.35, 0, 90, 0.2, 70, o.sea ? '#2b8fe6' : '#8fce6a');
+  M.ps.forEach((q, i) => { const z = (i - (n - 1) / 2) * lw; box((x1 + x0) / 2, -0.06, z, x1 - x0, 0.3, lw * 0.96, i % 2 ? (c2 || '#f6d7a8') : (c1 || '#f2cc94')); });
+  if (o.sea) box(x1 - 0.06, 0.11, 0, 0.12, 0.03, n * lw, '#e60012');
+  else { box(-9, 0.11, 0, 0.14, 0.03, n * lw, '#ffffff'); const k = n * 4; for (let j = 0; j < k; j++) for (let c = 0; c < 2; c++) box(8 + c * 0.3, 0.11, (j + 0.5) / k * n * lw - n * lw / 2, 0.3, 0.03, n * lw / k, (j + c) % 2 ? '#16233a' : '#ffffff'); }
+  M.ps.forEach((q, i) => { const z = (i - (n - 1) / 2) * lw; fn(q, z, lw, i); const pr = P(-10.1, 0.2, z); txt(q.p.name, pr[0], pr[1], Math.max(14, 30 * pr[2]), q.p.color, 'center', '#fff'); });
+}
+function plaza(ps, o) { // ロビーや説明画面の背景：広場に全員が並ぶ
+  o = o || {}; sky(o.sky || '#5fd0ff', o.sky2 || '#bfe9ff'); cam3(Math.sin(TT * 0.25) * 1.2, 3.1, 11.5, 0, 1.5, 0, 40);
+  box(0, -0.1, 0, 90, 0.2, 60, o.ground || '#7ed957'); cyl(0, 0.01, 0.5, 6.5, 0.04, o.pad || '#f3e2b5');
+  for (const [tx, tz] of [[-9, -5], [-6.5, -8], [7, -7], [9.5, -4], [-11, -1], [11.5, -9]]) { cyl(tx, 0.9, tz, 0.2, 1.8, '#8b5a2b'); ball(tx, 2.4, tz, 1.1, '#3fa34d'); }
+  const n = ps.length; ps.forEach((p, i) => { const x = (i - (n - 1) / 2) * Math.min(1.7, 11 / Math.max(1, n)); mii(p, x, 1 + Math.abs(x) * 0.12, { s: 0.9, arm: [0, 0.55 + Math.sin(TT * 6 + i) * 0.3], y: o.hop ? Math.abs(Math.sin(TT * 5 + i)) * 0.25 : 0 }); });
+}
+
+/* =================================================================
+   各ミニゲームの3Dシーン（ゲームのルール側は変更せず、描画だけを差し替える）
+   ================================================================= */
+const FAKE = (color, id) => ({ color, id, name: '' });
+const DRAW3D = {
+  strap(M, T) {
+    sky('#8fd8ff', '#d6f2ff'); G3.shake = M.cur && !M.done ? 0.07 : 0; cam3(0, 2.3, 9.5, 0, 1.75, 0, 40);
+    box(0, -0.1, 0, 30, 0.2, 7, '#8c96a8'); box(0, 2.2, -2.6, 30, 4.8, 0.3, '#efe9dc'); box(0, 4.5, -0.5, 30, 0.3, 5, '#dcd5c4');
+    for (let w = -1; w <= 1; w++) {
+      box(w * 6.5, 2.4, -2.42, 5, 1.9, 0.1, '#9fdcff', { unlit: 1 });
+      for (let b = 0; b < 4; b++) { const bx = ((b * 2.4 - M.scroll / 60) % 9.6 + 9.6) % 9.6 - 4.8, hh = 0.9 + ((b * 7) % 3) * 0.3; if (Math.abs(bx) < 2.05) box(w * 6.5 + bx, 1.45 + hh / 2, -2.36, 0.8, hh, 0.05, b % 2 ? '#7a8fb0' : '#93a6c4', { unlit: 1 }); }
+    }
+    seg(-14, 3.95, 0, 14, 3.95, 0, 0.06, '#c9c2b0');
+    const n = M.ps.length, sp = Math.min(2.4, 10 / n);
+    M.ps.forEach((q, i) => {
+      const x = (i - (n - 1) / 2) * sp, ang = q.out ? q.fd * (0.55 + q.fall) : q.th * 0.55;
+      seg(x + 0.5, 3.95, 0, x + 0.5, 3.1, 0, 0.03, '#ffffff'); ring3(x + 0.5, 2.92, 0, 0.17, '#ffffff', { rx: Math.PI / 2 });
+      mii(q.p, x, 0, { rz: -ang, gray: q.out, arm: q.out ? 0 : [0, 0.86] });
+      const pr = P(x, -0.1, 1.2); tag(q.p, pr[0], pr[1] + 22); if (q.out) { const h = P(x, 1.5, 0); txt('OUT', h[0], h[1], 46, '#ff4d5e', 'center', '#fff'); }
+    });
+    hud(M);
+    if (!M.done) { if (M.cur) txt(M.cur.dir > 0 ? 'キキーッ！ 急ブレーキ' : 'ガクン！ 急発進', 640, 150, 56, '#ff4d5e', 'center', '#fff'); else if (M.warn && Math.floor(T * 6) % 2) txt(M.warn.dir > 0 ? 'まもなく 急ブレーキ →' : '← まもなく 急発進', 640, 150, 42, '#16233a', 'center', '#fff'); }
+  },
+  tray(M, T) {
+    lanes(M, (q, z, lw, i) => {
+      const x = -9 + q.d * 0.17, mv = !q.fin && q.pen <= 0; mii(q.p, x, z, { ry: Math.PI / 2, s: 1, run: mv, t: T + i, fwd: 1.25 });
+      cyl(x + 0.8, 1.26, z, 0.55, 0.05, '#8b5a2b', { rz: q.bump > 0 ? Math.sin(T * 40) * 0.1 : 0 });
+      if (q.pen <= 0) cyl(x + 0.8 + q.gy * 0.4, 1.47, z + q.gx * 0.4, 0.12, 0.36, Math.hypot(q.gx, q.gy) > 0.75 ? '#ff4d5e' : '#5cc8ff');
+      const pr = P(x, 2.5, z); if (q.pen > 0) txt('こぼれた！', pr[0], pr[1], 26, '#3d7bff', 'center', '#fff'); if (q.fin) txt('ゴール！', pr[0], pr[1], 26, '#ff4d5e', 'center', '#fff');
+    }); hud(M);
+  },
+  sumo(M) {
+    sky('#1f6fb5', '#0d3b66'); cam3(0, 12, 9.5, 0, 0, 0.6, 40); box(0, -0.7, 0, 70, 0.2, 50, '#1a5fa0'); const R = M.R / 45;
+    cyl(0, -0.3, 0, R + 0.25, 0.6, '#c9b06a'); cyl(0, 0.01, 0, R, 0.04, '#f6ecc7'); cyl(0, 0.03, 0, R * 0.55, 0.02, '#d14b3d'); cyl(0, 0.04, 0, R * 0.55 - 0.14, 0.02, '#f6ecc7');
+    M.ps.forEach(q => { if (q.out) return; const x = (q.x - 640) / 45, z = (q.y - 400) / 45; shadow(x, z, 0.8); ball(x, 0.78, z, 0.75, q.p.color); mii(q.p, x, z, { y: 1.45, s: 0.55, nosh: 1 }); });
+    hud(M); M.ps.forEach((q, i) => { tag(q.p, 100, 130 + i * 44); if (q.out) txt('OUT', 170, 130 + i * 44, 20, '#ff4d5e', 'left', '#fff'); });
+    txt('時間切れのときは、中心に近い人の勝ち', 640, 700, 18, '#fff', 'center', '#16233a', 500);
+  },
+  soda(M, T) {
+    st3(M, { bg: ['#ffe066', '#ff9f1c'], arm: q => q.jit > 0 ? [1, 1] : 0 }); const n = M.ps.length, f = stF(n);
+    M.ps.forEach((q, i) => {
+      const x = stX(i, n) + (q.jit > 0 ? rand(-0.05, 0.05) : 0), h = 1.9 * f, y0 = 2.55, lh = h * q.g / 100;
+      if (lh > 0.03) cyl(x, y0 + lh / 2, -0.5, 0.34 * f, lh, q.p.color); cyl(x, y0 + h / 2, -0.5, 0.42 * f, h, '#ffffff', { a: 0.35 });
+      cyl(x, q.fin ? y0 + h + 0.4 + ((T * 2) % 1) * 0.9 : y0 + h + 0.09, -0.5, 0.2 * f, 0.16, '#16233a');
+      if (q.fin) { const pr = P(x, y0 + h * 0.5, -0.5); txt('ポン！', pr[0], pr[1], 34, '#ff4d5e', 'center', '#fff'); }
+    });
+    hud(M); pods3(M, { sc: q => q.fin ? 'クリア' : Math.floor(q.g) + '%' });
+  },
+  daruma(M, T) {
+    lanes(M, (q, z, lw, i) => {
+      const x = -9 + q.d * 0.17; mii(q.p, x, z, { ry: Math.PI / 2, s: 1, run: !M.look && !q.fin, t: T * 1.4 + i });
+      const pr = P(x, 2.5, z); if (q.ht > 0) txt('うごいた！', pr[0], pr[1], 26, '#ff4d5e', 'center', '#fff'); if (q.fin) txt('タッチ！', pr[0], pr[1], 26, '#ff4d5e', 'center', '#fff');
+    }, '#bfe8a0', '#cdf0b2');
+    cyl(8.6, 1.6, -0.6, 0.22, 3.2, '#8b5a2b'); ball(8.6, 3.6, -0.6, 1.2, '#3fa34d'); mii(FAKE(M.look ? '#e60012' : '#5b6b82', 1), 9.3, 0.4, { s: 1.7, ry: M.look ? -Math.PI / 2 : Math.PI / 2 });
+    hud(M); const s = 'だるまさんが…';
+    if (M.look) txt('ころんだ！', 640, 140, 64, '#e60012', 'center', '#fff'); else txt(s.slice(0, Math.ceil(s.length * clamp(1 - M.nt / M.tot, 0, 1))), 640, 140, 54, '#16233a', 'center', '#fff');
+  },
+  homerun(M) {
+    sky('#7ec8f2', '#bfe8ff'); cam3(0, 5.2, 12.5, 0, 1.2, 0, 40); box(0, -0.1, 0, 70, 0.2, 40, '#3f9b4a'); cyl(0, 0.01, 0, 7.5, 0.03, '#c98a4b');
+    box(0, 1.2, -9, 40, 2.4, 0.3, '#2f6f3a'); mii(FAKE('#5b6b82', 2), -6, 0, { ry: Math.PI / 2, arm: M.pt < M.rel ? [0, 1] : 0 }); box(4, 0.04, 0, 0.14, 0.04, 4, '#e60012', { unlit: 1 });
+    const k = (M.pt - M.rel) / M.fly; if (M.pt >= M.rel && k < 1.6) { const bx = -5.4 + 9.4 * k; shadow(bx, 0, 0.2); ball(bx, 1.25 + Math.sin(clamp(k, 0, 1) * Math.PI) * 0.5, 0, 0.19, '#ffffff'); }
+    const n = M.ps.length;
+    M.ps.forEach((q, i) => { const z = (i - (n - 1) / 2) * Math.min(1.7, 7 / n), x = 5.1, sw = q.sw != null ? clamp((M.pt - q.sw) * 7, 0, 1) : 0, a = sw * 2.8 - 0.7; mii(q.p, x, z, { ry: -Math.PI / 2, s: 0.75, fwd: 0.9 }); seg(x - 0.35, 1.0, z, x - 0.35 - Math.cos(a) * 0.9, 1.05 + (1 - sw) * 0.5, z + Math.sin(a) * 0.9, 0.05, '#c9a26b'); });
+    hud(M); const pl = P(4, 0, 2.4); txt('ここで振る', pl[0], pl[1], 22, '#e60012', 'center', '#fff'); if (M.pt < M.rel) txt('かまえて…', 640, 150, 46, '#16233a', 'center', '#fff');
+    pods(M, { sc: q => q.s + 'm', bub: q => q.r != null ? (q.r >= 120 ? 'ホームラン ' : '') + q.r + 'm' : (M.pt > M.rel + M.fly + 0.5 ? '空振り' : null), bc: q => q.r >= 120 ? '#ff4d5e' : null });
+  },
+  fish(M, T) {
+    sky('#8fd8ff', '#d6f2ff'); cam3(0, 3.6, 11.5, 0, 1.3, 0, 40); box(0, -0.3, 3, 70, 0.2, 50, '#2b8fe6'); box(0, 0.15, -1.6, 34, 0.9, 2.6, '#8b5a2b');
+    for (let k = -6; k <= 6; k++) cyl(k * 2.6, -0.2, -0.4, 0.14, 1.2, '#6f4520');
+    const n = M.ps.length, sp = Math.min(2.6, 11 / n);
+    M.ps.forEach((q, i) => {
+      const x = (i - (n - 1) / 2) * sp, by = -0.12 + Math.sin(T * 2 + i) * 0.04 - (q.st === 'r' ? 0.14 : 0); mii(q.p, x, -1.4, { y: 0.6, s: 0.8, fwd: 0.9, nosh: 1 });
+      seg(x + 0.3, 1.45, -1.0, x + 0.3, 3.0, 1.0, 0.03, '#16233a'); seg(x + 0.3, 3.0, 1.0, x + 0.3, by, 1.7, 0.012, '#ffffff'); ball(x + 0.3, by, 1.7, 0.13, '#ff4d5e');
+      if (q.st === 'r') { const pr = P(x, 2.9, -1.4); ctx.fillStyle = 'rgba(255,255,255,.6)'; rr(pr[0] - 55, pr[1], 110, 14, 7); ctx.fill(); ctx.fillStyle = '#ffcc00'; rr(pr[0] - 55, pr[1], 110 * clamp(q.prog / q.need, 0, 1), 14, 7); ctx.fill(); txt('巻いてる！', pr[0], pr[1] - 16, 20, '#fff', 'center', '#16233a'); }
+    });
+    hud(M); txt('合図は自分のスマホにだけ出る。スマホを見て！', 640, 112, 26, '#16233a', 'center', '#fff');
+    pods(M, { sc: q => q.s + 'cm（' + q.n + '匹）', bub: q => q.mt > 0 ? q.msg : null });
+  },
+  safe(M) {
+    st3(M, { bg: ['#2b3a67', '#16233a'], floor: '#3a466e' }); const n = M.ps.length, f = stF(n);
+    M.ps.forEach((q, i) => {
+      const x = stX(i, n), w = 1.5 * f, y = 3.25; box(x, y, -0.6, w, w, w * 0.8, '#8a94a8');
+      if (q.fin) { box(x - w * 0.5, y, -0.6 + w * 0.55, w * 0.1, w * 0.9, w * 0.9, '#aab4c4'); for (let k = 0; k < 4; k++) cyl(x + (k % 2 - 0.5) * 0.3 * f, y - 0.4 * f + Math.floor(k / 2) * 0.1, -0.2, 0.2 * f, 0.07, '#f5a300'); }
+      else { box(x, y, -0.6 + w * 0.41, w * 0.86, w * 0.86, 0.06, '#aab4c4'); ring3(x, y - 0.1 * f, -0.6 + w * 0.46, 0.3 * f, '#16233a', { rx: Math.PI / 2 }); }
+      for (let k = 0; k < 3; k++) ball(x + (k - 1) * 0.36 * f, y + w * 0.62, -0.6, 0.11 * f, k < q.k ? '#22e06a' : '#55627a', { unlit: k < q.k });
+    });
+    hud(M); txt('ヒントは自分のスマホの色だけ。赤いほど近い！', 640, 112, 26, '#fff', 'center', '#16233a'); pods3(M, { sc: q => q.fin ? 'オープン！' : q.k + ' / 3' });
+  },
+  color(M) {
+    st3(M, { bg: ['#f1f3f5', '#dee2e6'] }); box(0, 3.95, -1, 5.4, 2.4, 0.3, `hsl(${M.h},85%,55%)`, { unlit: 1 }); box(0, 3.95, -1.2, 5.8, 2.8, 0.2, '#16233a');
+    hud(M); txt(M.ph === 'show' ? '結果' : 'この色はスライダーのどこ？', 640, 330, 26, '#fff', 'center', '#16233a');
+    pods3(M, { ok: q => M.ph === 'ask' && q.a !== undefined, bub: q => M.ph === 'show' ? (q.g != null ? '+' + q.g : '') : null, bc: q => M.ph === 'show' && q.a !== undefined ? `hsl(${q.a * 3.6},85%,50%)` : null });
+  },
+  candle(M, T) {
+    st3(M, { bg: ['#3b2a4a', '#1b1226'], floor: '#4a3860' }); const n = M.ps.length, f = stF(n);
+    M.ps.forEach((q, i) => {
+      const x = stX(i, n), v = clamp(+q.in.vol || 0, 0, 1), lit = 10 - Math.floor(q.g / 10), y = 2.75;
+      cyl(x, y + 0.25 * f, -0.5, 0.75 * f, 0.5 * f, '#fff5e6'); cyl(x, y + 0.53 * f, -0.5, 0.77 * f, 0.08 * f, '#ff7ab6');
+      for (let k = 0; k < 10; k++) { const a = k / 10 * TAU, cx = x + Math.cos(a) * 0.55 * f, cz = -0.5 + Math.sin(a) * 0.55 * f; cyl(cx, y + 0.78 * f, cz, 0.035 * f, 0.4 * f, q.p.color); if (k >= 10 - lit && !q.fin) ball(cx + v * 0.12, y + 1.06 * f + Math.sin(T * 20 + k) * 0.015, cz, 0.07 * f, '#ffcc00', { unlit: 1, s: [1, 1.6, 1] }); }
+      if (q.fin) { const pr = P(x, y + 1.5 * f, -0.5); txt('ぜんぶ消えた！', pr[0], pr[1], 24, '#fff', 'center', '#16233a'); }
+    });
+    hud(M); pods3(M, { sc: q => q.fin ? 'クリア' : 'あと' + (10 - Math.floor(q.g / 10)) + '本' });
+  },
+  voice(M, T) {
+    lanes(M, (q, z, lw, i) => {
+      for (const o of M.ob) { const x = -6 + (o - M.t) * 7.5; if (x < -11 || x > 11.4) continue; cyl(x, 0.4, z, 0.2, 0.8, '#1fa84f'); ball(x, 0.82, z, 0.2, '#1fa84f'); seg(x, 0.5, z - 0.32, x, 0.5, z + 0.32, 0.08, '#1fa84f'); }
+      if (q.out) mii(q.p, -6, z, { s: 0.9, rz: 1.45, gray: 1, y: 0.3 }); else mii(q.p, -6, z, { y: q.y / 60, s: 0.9, ry: Math.PI / 2, run: q.y === 0, t: T * 1.5 + i, arm: q.y > 0 ? [1, 1] : 0 });
+      if (q.out) { const pr = P(-4.2, 0.8, z); txt('OUT', pr[0], pr[1], 30, '#ff4d5e', 'center', '#fff'); }
+    }); hud(M);
+  },
+  gun(M) {
+    st3(M, { bg: ['#ffd8a8', '#e8590c'], floor: '#e9b97a' });
+    for (const sd of [-1, 1]) { cyl(sd * 6, 3.2, -2.5, 0.3, 2.2, '#2f9e44'); ball(sd * 6, 4.35, -2.5, 0.3, '#2f9e44'); seg(sd * 6 - 0.6, 3.4, -2.5, sd * 6 + 0.6, 3.4, -2.5, 0.14, '#2f9e44'); }
+    ball(0, 4.3, -3.6, 1.3, '#ffe066', { unlit: 1 });
+    hud(M); panel(M.ph === 'ask' ? (M.f ? [['撃て！！', 120, '#e60012']] : [['…まだだ…', 64, '#16233a']]) : [['結果', 44]], 230, 700);
+    pods3(M, { bub: q => q.a === 'F' ? 'フライング' : q.a === undefined ? null : (M.ph === 'show' ? q.a.toFixed(3) + '秒' : 'バン！'), bc: q => q.a === 'F' ? '#8a94a8' : null });
+  },
+  rhythm(M) {
+    st3(M, { bg: ['#3b2a4a', '#1b1226'], floor: '#4a3860', jump: q => q.jt > 0 && q.j !== 'ミス' });
+    seg(-6.5, 3.9, -0.6, 6.5, 3.9, -0.6, 0.05, '#8a94a8'); ring3(-3.4, 3.9, -0.6, 0.55, '#ffcc00', { rx: Math.PI / 2 });
+    for (const t of M.nt) { const x = -3.4 + (t - M.t) * 4.2; if (x < -4.6 || x > 6.6) continue; ball(x, 3.9, -0.6, 0.38, '#ff7ab6', { unlit: 1 }); }
+    hud(M); pods3(M, { bub: q => q.jt > 0 ? q.j : null, bc: q => q.j === 'ぴったり！' ? '#ff4d5e' : null });
+  },
+  mole(M) {
+    st3(M, { bg: ['#bfe8a0', '#7ed957'], floor: '#8fce6a' }); const n = M.ps.length, f = stF(n);
+    M.ps.forEach((q, i) => {
+      const x = stX(i, n), w = 1.7 * f, y = 3.3; box(x, y, -0.8, w, w, 0.2, '#8b5a2b', { rx: -0.25 });
+      q.g.forEach((c, k) => { const cx = x + (k % 3 - 1) * w * 0.3, cy = y + (1 - Math.floor(k / 3)) * w * 0.3; cyl(cx, cy, -0.66, 0.2 * f, 0.06, '#3d2a14', { rx: Math.PI / 2 - 0.25 }); if (c) ball(cx, cy, -0.5, 0.2 * f, c.b ? '#e60012' : '#f2cc94'); });
+    });
+    hud(M); txt('モグラは自分のスマホに出る！', 640, 112, 28, '#16233a', 'center', '#fff'); pods3(M);
+  },
+  odd(M) {
+    st3(M, { bg: ['#f1f3f5', '#dee2e6'] }); const g = M.g, c = 2.6 / g;
+    for (let i = 0; i < g * g; i++) { const big = M.ph === 'show' && i === M.o ? 1.14 : 1; box((i % g - (g - 1) / 2) * c, 3.9 + ((g - 1) / 2 - Math.floor(i / g)) * c, -0.8 + (big > 1 ? 0.3 : 0), c * 0.92 * big, c * 0.92 * big, 0.25, `hsl(${M.h},70%,${i === M.o ? 50 + M.d : 50}%)`, { unlit: 1 }); }
+    hud(M); pods3(M, { bub: q => q.a === true ? '正解' : q.a === false ? '×' : null, bc: q => q.a === true ? '#22b860' : q.a === false ? '#8a94a8' : null });
+  },
+  simon(M) {
+    st3(M, { bg: ['#16233a', '#2b3a67'], floor: '#2b3a67' });
+    SC.forEach((c, i) => { const x = (i % 2 - 0.5) * 1.5, y = 4.6 - Math.floor(i / 2) * 1.5, on = M.lit === i; box(x, y, -0.8 + (on ? 0.25 : 0), on ? 1.4 : 1.25, on ? 1.4 : 1.25, 0.3, c, { unlit: on }); if (!on) box(x, y, -0.62, 1.25, 1.25, 0.02, '#000000', { a: 0.45 }); const pr = P(x, y, -0.5); txt(SN[i], pr[0], pr[1], 34, '#fff'); });
+    hud(M); txt(M.ph === 'show' ? 'おぼえて！' : M.ph === 'in' ? 'スマホで入力！ 残り' + Math.ceil(M.pt) + '秒' : 'セーフ！', 1040, 240, 30, '#fff');
+    pods3(M, { sc: () => '', bub: q => q.out ? '脱落' : M.ph === 'in' ? (q.okk ? 'OK' : q.i + '/' + M.seq.length) : null, bc: q => q.out ? '#8a94a8' : q.okk ? '#22b860' : null });
+  },
+  touch(M, T) {
+    lanes(M, (q, z, lw, i) => { const x = -9 + q.n / 16 * 17; mii(q.p, x, z, { ry: Math.PI / 2, s: 1, run: !q.fin, t: T + i, arm: q.fin ? [1, 1] : 0 }); const pr = P(x, 2.5, z); txt(q.fin ? 'ゴール！' : '次は ' + (q.n + 1), pr[0], pr[1], 24, q.fin ? '#ff4d5e' : '#16233a', 'center', '#fff'); }, '#d0ebff', '#e7f5ff'); hud(M);
+  },
+  chicken(M) {
+    lanes(M, (q, z, lw) => {
+      const x = -9 + q.x * 0.17, y = q.st === 3 ? -q.fy / 70 : 0;
+      if (y > -7) { box(x - 0.5, y + 0.45, z, 1.5, 0.45, 0.8, q.p.color); box(x - 0.65, y + 0.85, z, 0.8, 0.4, 0.7, q.p.color); box(x - 0.24, y + 0.85, z, 0.04, 0.3, 0.6, '#cfe8ff'); for (const a of [-0.95, -0.05]) for (const b of [-0.42, 0.42]) cyl(x + a, y + 0.22, z + b, 0.2, 0.14, '#16233a', { rx: Math.PI / 2 }); }
+      const pr = P(-2, 1.4, z); txt(q.st === 3 ? '落下…' : q.st === 4 ? 'ガケまで ' + (100 - q.x).toFixed(1) + 'm' : '', pr[0], pr[1], 26, q.st === 3 ? '#e60012' : '#16233a', 'center', '#fff');
+    }, '#c9a26b', '#d4b17d', { x1: 8, sea: 1 }); hud(M);
+  },
+  stack(M) {
+    sky('#d0ebff', '#a5d8ff'); cam3(0, 4.6, 14, 0, 3.4, 0, 40); box(0, 0.9, -1, 70, 0.2, 30, '#74c0fc'); const Y = 1.0; const n = M.ps.length, sp = Math.min(5.2, 19 / n), f = Math.min(1, sp / 5.4), u = f / 62;
+    M.ps.forEach((q, i) => {
+      const x = (i - (n - 1) / 2) * sp, off = Math.max(0, q.h - 13) * 0.44, d = 1.3 * f; box(x, Y + 0.2, 0, 120 * u, 0.4, d, '#55627a');
+      q.bs.forEach((b, k) => { const y = Y + 0.64 + k * 0.44 - off; if (y > Y + 0.5) box(x + b[0] * u, y, 0, b[1] * u, 0.4, d, k % 2 ? q.p.color : '#ffffff'); if (!(k % 2)) box(x + b[0] * u, y, 0.01, b[1] * u * 0.96, 0.34, d, q.p.color); });
+      if (!q.dead) box(x + M.pos(q) * u, Y + 0.64 + q.h * 0.44 - off + 0.3, 0, q.w * u, 0.4, d, '#16233a'); else { const pr = P(x, 5.5, 0); txt('おしまい', pr[0], pr[1], 28, '#ff4d5e', 'center', '#fff'); }
+    });
+    hud(M); pods(M, { sc: q => q.h + '段' });
+  },
+  flick(M, T) {
+    lanes(M, (q, z, lw, i) => { const x = -9 + q.i / 25 * 17; mii(q.p, x, z, { ry: Math.PI / 2, s: 1, run: !q.fin && q.pen <= 0, t: T * 1.3 + i, rx: q.pen > 0 ? -0.7 : 0, arm: q.fin ? [1, 1] : 0 }); const pr = P(x, 2.5, z); txt(q.fin ? 'ゴール！' : q.pen > 0 ? 'ミス！' : q.i + ' / 25', pr[0], pr[1], 24, q.pen > 0 ? '#e60012' : '#16233a', 'center', '#fff'); }, '#f3d9fa', '#eebefa'); hud(M);
+  },
+  curling(M) {
+    sky('#e7f5ff', '#d0ebff'); cam3(0, 19, 10.5, 0, 0, 0.9, 40); box(0, -0.4, 0, 70, 0.2, 50, '#74c0fc'); box(0, -0.1, 0, 22.4, 0.2, 10.8, '#f8fbff');
+    [[150, '#3d7bff'], [100, '#ffffff'], [50, '#ff4d5e'], [14, '#ffffff']].forEach(([r, c], k) => cyl(360 / 55, 0.01 + k * 0.004, 0, r / 55, 0.01, c));
+    box(-8, 0.012, 0, 0.06, 0.01, 10.8, '#adb5bd');
+    M.st.forEach(s => { if (s.dead) return; const x = (s.x - 640) / 55, z = (s.y - 400) / 55; shadow(x, z, 0.5); cyl(x, 0.16, z, 0.47, 0.28, '#868e96'); cyl(x, 0.32, z, 0.3, 0.06, s.q.p.color); ball(x, 0.42, z, 0.12, s.q.p.color); });
+    if (M.ph === 'aim' && M.cur) mii(M.cur.p, -9.6, 0, { ry: Math.PI / 2, s: 0.9, fwd: 1 });
+    hud(M); M.ps.forEach((q, i) => { tag(q.p, 110, 120 + i * 38); txt(q.s >= 999 ? '-' : '中心まで ' + q.s, 170, 121 + i * 38, 18, '#16233a', 'left', '#fff'); });
+  },
+  circle(M) { st3(M, { bg: ['#e5dbff', '#f3f0ff'] }); hud(M); gallery(M, { label: q => M.ph === 'show' ? q.s + '点' : '' }); pods3(M, { sc: q => M.ph === 'show' ? q.s + '点' : '', ok: q => M.ph === 'ask' && q.a !== undefined }); },
+  artvote(M) { st3(M, { bg: ['#fff3bf', '#fff9db'] }); hud(M); txt('お題：' + M.th + (M.r === 1 ? '　いちばん良い絵に投票！' : ''), 640, 112, 32, '#16233a', 'center', '#fff'); gallery(M, { label: q => M.r === 1 && M.ph === 'show' ? q.v + '票' : '' }); pods3(M, { sc: q => M.r === 1 && M.ph === 'show' ? q.v + '票' : '', ok: q => M.ph === 'ask' && q.a !== undefined }); },
+  fake(M) {
+    st3(M, { bg: ['#e5dbff', '#f3f0ff'] }); hud(M); const sh = M.r === 1 && M.ph === 'show';
+    txt(M.r === 0 ? 'お題はスマホを見てね。1人だけニセモノがいる…' : sh ? `ニセモノは ${M.f.p.name}！ お題は「${M.th}」 ${M.caught ? '見やぶった！' : 'にげきり成功！'}` : 'ニセモノはだれ？ 話し合って投票！', 640, 112, 28, sh ? '#e60012' : '#16233a', 'center', '#fff');
+    gallery(M, { hide: () => M.r === 0, label: q => sh ? q.v + '票' : '' });
+    pods3(M, { sc: q => sh ? q.s + '点' : '', ok: q => M.ph === 'ask' && q.a !== undefined, bub: q => sh && q === M.f ? 'ニセモノ' : null, bc: () => '#e60012' });
+  },
+  quickdraw(M) {
+    st3(M, { bg: ['#d0ebff', '#e7f5ff'], arm: q => q === M.d ? [0, 1] : 0 }); hud(M);
+    ctx.fillStyle = 'rgba(0,0,0,.15)'; rr(475, 98, 330, 290, 24); ctx.fill(); ctx.fillStyle = '#fff'; rr(475, 92, 330, 290, 24); ctx.fill(); strokes(M.d.in.draw, 505, 97, 270, '#16233a', 5);
+    txt('画家：' + M.d.p.name, 250, 200, 30, '#16233a', 'center', '#fff'); txt(M.ph === 'show' ? '答えは「' + M.w + '」' : 'これは何？', 1040, 200, 30, M.ph === 'show' ? '#e60012' : '#16233a', 'center', '#fff');
+    pods3(M, { ok: () => false, bub: q => q === M.d ? '画家' : q.a === true ? '正解' : q.a === false ? '×' : null, bc: q => q === M.d ? '#9b5de5' : q.a === true ? '#22b860' : q.a === false ? '#8a94a8' : null });
+  },
+  saboteur(M) {
+    st3(M, { bg: ['#c5f6fa', '#e3fafc'], arm: q => q.tp > 0 ? [1, 1] : 0 }); const sh = M.r === 1 && M.ph === 'show', r = 0.45 + M.g * 0.013;
+    ball(0, 3.2 + r, -1, r, M.pop ? '#22b860' : '#ff4d5e', { s: [1, 1.08, 1] }); seg(0, 3.2, -1, 0, 2.2, -1, 0.02, '#16233a'); const pb = P(0, 3.2 + r, -1 + r); txt(Math.floor(M.g) + '%', pb[0], pb[1], 38, '#fff', 'center', '#16233a');
+    hud(M); txt(M.r === 0 ? (M.ph === 'ask' ? '連打でふくらませろ！ 残り' + Math.ceil(M.pt) + '秒' : M.pop ? 'ふくらんだ！' : 'ふくらまなかった…') : sh ? `サボり魔は ${M.sb.p.name}！` : 'サボり魔はだれ？ スマホで投票！', 640, 112, 32, sh ? '#e60012' : '#16233a', 'center', '#fff');
+    pods3(M, { sc: q => sh ? q.s + '点' : '', ok: q => M.r === 1 && M.ph === 'ask' && q.a !== undefined, bub: q => sh ? q.v + '票' : null, bc: q => sh && q === M.sb ? '#e60012' : null });
+  },
+  indian(M) {
+    st3(M, { bg: ['#0b7285', '#15aabf'], floor: '#0c8599' }); const n = M.ps.length, f = stF(n), sh = M.ph === 'show';
+    M.ps.forEach((q, i) => { const x = stX(i, n); box(x, 3.25, -0.2, 1.0 * f, 1.4 * f, 0.06, sh ? '#ffffff' : q.p.color, { ry: sh ? 0 : Math.sin(TT * 2 + i) * 0.15 }); const pr = P(x, 3.25, -0.1); txt(sh ? String(q.c) : '？', pr[0], pr[1], 70 * f, sh ? '#16233a' : '#fff'); if (sh) { const p2 = P(x, 4.2, -0.2); txt(q.a === 0 ? '勝負' : 'おりた', p2[0], p2[1], 24, q.a === 0 ? '#ffcc00' : '#dee2e6', 'center', '#16233a'); } });
+    hud(M); txt(sh ? 'オープン！' : '自分のカードだけ見えない。勝負する？', 640, 112, 32, '#fff', 'center', '#16233a');
+    pods3(M, { ok: q => !sh && q.a !== undefined, bub: q => sh ? (q.g > 0 ? '+' + q.g : String(q.g)) : null, bc: q => q.g > 0 ? '#22b860' : q.g < 0 ? '#e60012' : null });
+  },
+  unique(M) {
+    st3(M, { bg: ['#ffe8cc', '#ffd8a8'], floor: '#ffe8cc' }); const sh = M.ph === 'show', k = M.v.length, sp = Math.min(2.0, 11.4 / k);
+    M.v.forEach((v, i) => {
+      const x = (i - (k - 1) / 2) * sp, pk = sh ? M.ps.filter(q => q.a === i) : []; box(x, 3.7, -0.8, 1.25, 0.8, 0.9, '#8b5a2b'); box(x, 4.22, -0.8, 1.3, 0.3, 0.95, '#c9a227', { rx: sh && pk.length ? -0.5 : 0 }); box(x, 3.8, -0.33, 0.2, 0.25, 0.05, '#ffcc00');
+      const pr = P(x, 3.55, -0.3); txt(v + '点', pr[0], pr[1], 30, '#fff', 'center', '#16233a');
+      pk.forEach((q, j) => { const p2 = P(x + (j - (pk.length - 1) / 2) * Math.min(0.45, 1.2 / pk.length), 2.95, -0.3); avatar(q.p, p2[0], p2[1], 17); });
+      if (pk.length > 1) { const p3 = P(x, 4.75, -0.8); txt('カブり！', p3[0], p3[1], 24, '#e60012', 'center', '#fff'); }
+    });
+    hud(M); txt(sh ? '結果発表！' : 'どの箱にする？ かぶったら0点！', 640, 112, 32, '#16233a', 'center', '#fff');
+    pods3(M, { ok: q => !sh && q.a !== undefined, bub: q => sh ? '+' + (q.g || 0) : null, bc: q => q.g ? '#22b860' : '#8a94a8' });
+  },
+  bomb(M, T) {
+    sky('#343a40', '#212529'); cam3(0, 7.5, 9.5, 0, 0.9, 0, 40); box(0, -0.1, 0, 70, 0.2, 50, '#495057'); cyl(0, 0.01, 0, 5, 0.04, '#868e96'); const n = M.ps.length;
+    M.ps.forEach((q, i) => {
+      const a = i / n * TAU - Math.PI / 2, x = Math.cos(a) * 3.6, z = Math.sin(a) * 2.9 + 0.2, ry = Math.atan2(-x, -z);
+      if (q.out) mii(q.p, x, z, { rz: 1.45, gray: 1, y: 0.3, s: 0.9 }); else mii(q.p, x, z, { ry, s: 0.9, arm: q === M.h ? [1, 1] : 0, y: q === M.h ? Math.abs(Math.sin(T * 12)) * 0.12 : 0 });
+      nameAt(q.p, x, -0.1, z + 0.75);
+      if (q === M.h) { ball(x, 2.75, z, 0.42, '#16233a'); seg(x, 3.1, z, x + 0.2, 3.45, z, 0.03, '#c98a4b'); ball(x + 0.22, 3.5, z, 0.09 + Math.random() * 0.05, Math.floor(T * 10) % 2 ? '#ffcc00' : '#ff4d5e', { unlit: 1 }); }
+      if (q === M.bx && M.bm > 0) { ball(x, 1.4, z, 1 + (1.8 - M.bm) * 1.6, '#ff9f1c', { unlit: 1, a: clamp(M.bm / 1.8, 0, 1) * 0.8 }); const pr = P(x, 2.6, z); txt('ドカーン！', pr[0], pr[1], 50, '#ffcc00', 'center', '#e60012'); }
+    });
+    hud(M); txt('いつ爆発するかは、だれにも分からない', 640, 112, 24, '#dee2e6');
+  },
+  pk(M) {
+    const sh = M.ph === 'show'; st3(M, { bg: ['#8fd8ff', '#bfe8ff'], floor: '#3f9b4a' });
+    box(0, 2.6, -1.6, 7.2, 0.2, 2, '#3f9b4a'); for (const sd of [-1, 1]) cyl(sd * 2.7, 3.8, -1.6, 0.07, 2.2, '#ffffff'); seg(-2.7, 4.9, -1.6, 2.7, 4.9, -1.6, 0.07, '#ffffff'); box(0, 3.8, -2.3, 5.4, 2.2, 0.05, '#ffffff', { a: 0.25 });
+    const kx = sh && M.kp.a !== undefined ? (clamp(M.kp.a | 0, 0, 2) - 1) * 1.75 : 0; mii(M.kp.p, kx, -1.5, { y: 2.7, s: 0.8, arm: [1, 1], nosh: 1 });
+    if (sh) M.ps.forEach((q, i) => { if (q === M.kp || q.a === undefined) return; ball((clamp(q.a | 0, 0, 2) - 1) * 1.75 + ((i % 4) - 1.5) * 0.3, 3.3 + (i % 3) * 0.45, -1.2, 0.17, '#ffffff'); });
+    hud(M); PD.forEach((l, i) => { const pr = P((i - 1) * 1.75, 5.15, -1.6); txt(l, pr[0], pr[1], 20, '#fff', 'center', '#16233a'); });
+    if (!sh) txt('キーパー：' + M.kp.p.name, 640, 112, 28, '#fff', 'center', '#16233a');
+    pods3(M, { ok: q => !sh && q.a !== undefined, bub: q => sh ? (q === M.kp ? 'セーブ +' + q.g : q.g ? 'ゴール +2' : '止められた') : null, bc: q => q === M.kp ? '#9b5de5' : q.g ? '#22b860' : '#8a94a8' });
+  },
+  mind(M) {
+    st3(M, { bg: ['#1c3d5a', '#0b2239'], floor: '#234a6b' }); box(0, 3.9, -0.8, 1.7, 2.2, 0.1, '#ffffff', { ry: Math.sin(TT) * 0.08 }); const pc = P(0, 3.9, -0.7);
+    hud(M); txt(M.top ? String(M.top) : '-', pc[0], pc[1], 100, '#16233a'); txt('小さい順に出せ！ 数字を言うのは禁止', 640, 112, 28, '#fff', 'center', '#16233a');
+    txt('ミスできる回数：' + '●'.repeat(Math.max(0, M.life)) + '○'.repeat(2 - Math.max(0, M.life)), 300, 250, 26, '#ffcc00', 'center', '#16233a');
+    M.log.slice(-6).forEach((l, i) => { const x = 880 + (i % 3) * 62, y = 220 + Math.floor(i / 3) * 50; ctx.fillStyle = l[2] ? '#e60012' : l[1].color; rr(x, y, 54, 40, 10); ctx.fill(); txt(String(l[0]), x + 27, y + 21, 22, '#fff'); }); txt('出した数字', 970, 195, 18, '#dee2e6');
+    pods3(M, { sc: q => '残り' + q.h.length + '枚' });
+  },
+  tug(M, T) {
+    sky('#8fd8ff', '#c9f0ff'); const big = Math.max(M.team(0).length, M.team(1).length) > 2; cam3(0, 3.2, big ? 17 : 13, 0, 1.6, 0, 40); box(0, -0.1, 0, 90, 0.2, 40, '#7ed957'); const off = M.r * 3.6;
+    box(0, 0.02, 0, 0.1, 0.03, 6, '#ffffff'); box(-3.6, 0.02, 0, 0.1, 0.03, 6, '#ff4d5e'); box(3.6, 0.02, 0, 0.1, 0.03, 6, '#3d7bff');
+    seg(-11 + off, 1.1, 0, 11 + off, 1.1, 0, 0.06, '#c9a26b'); cone(off, 0.75, 0, 0.22, 0.5, '#ffb800', { rx: Math.PI });
+    [0, 1].forEach(t => M.team(t).forEach((q, i) => { const sd = t ? 1 : -1, x = off + sd * (2.4 + i * 1.5); mii(q.p, x, 0, { ry: -sd * Math.PI / 2, rx: -(0.3 + (q.pl ? 0.14 : 0)), fwd: 1, run: q.pl > 0, t: T * 2 }); nameAt(q.p, x, -0.1, 1.3); }));
+    hud(M); txt('Aチーム ← ひっぱれ', 180, 130, 30, '#ff4d5e', 'left', '#fff'); txt('ひっぱれ → Bチーム', 1100, 130, 30, '#3d7bff', 'right', '#fff');
+  },
+  pong(M) {
+    sky('#0b7285', '#0b3d4a'); cam3(0, 17.5, 10.5, 0, 0, 0.9, 40); box(0, -0.5, 0, 80, 0.2, 60, '#0a5c6b'); box(0, -0.15, 0, 23, 0.3, 11.4, '#15aabf');
+    for (let k = -5; k <= 5; k++) box(0, 0.01, k, 0.08, 0.02, 0.5, '#ffffff'); for (const sd of [-1, 1]) box(0, 0.2, sd * 5.6, 23, 0.5, 0.2, '#ffffff');
+    M.ps.forEach(q => { const x = (q.px - 640) / 55, z = (q.py - 400) / 55; box(x, 0.35, z, 0.45, 0.7, q.ph / 55, q.p.color); const pr = P(x, 1.0, z - q.ph / 110); txt(q.p.name, pr[0], pr[1] - 6, 16, '#fff', 'center', '#16233a'); });
+    const bx = (M.b.x - 640) / 55, bz = (M.b.y - 400) / 55; shadow(bx, bz, 0.28); ball(bx, 0.3, bz, 0.28, '#ffffff');
+    hud(M); txt(String(M.sc[0]), 520, 150, 80, '#fff', 'center', '#16233a'); txt(String(M.sc[1]), 760, 150, 80, '#fff', 'center', '#16233a');
+  },
+  tag(M, T) {
+    sky('#8fd8ff', '#d6f2ff'); cam3(0, 17.5, 10.5, 0, 0, 0.9, 40); box(0, -0.4, 0, 80, 0.2, 60, '#5bb83a'); box(0, -0.1, 0, 22.4, 0.2, 11, '#8ce99a'); for (const sd of [-1, 1]) { box(0, 0.2, sd * 5.5, 22.6, 0.5, 0.2, '#ffffff'); box(sd * 11.2, 0.2, 0, 0.2, 0.5, 11, '#ffffff'); }
+    M.ps.forEach((q, i) => {
+      const x = (q.x - 640) / 55, z = (q.y - 400) / 55, j = Array.isArray(q.in.joy) ? q.in.joy : [0, 0], mv = Math.hypot(+j[0] || 0, +j[1] || 0) > 0.15; if (mv) q.ry3 = Math.atan2(+j[0] || 0, -(+j[1] || 0));
+      if (q.out) { const pr = P(x, 0.3, z); txt('つかまった', pr[0], pr[1], 18, '#495057', 'center', '#fff'); return; }
+      const oni = q === M.oni; mii(q.p, x, z, { ry: q.ry3 || 0, s: oni ? 1.15 : 0.8, run: mv && !(oni && M.t < 1.5), t: T * 1.4 + i });
+      if (oni) { for (const sd of [-1, 1]) cone(x + sd * 0.2, 2.55, z, 0.09, 0.35, '#e60012'); const pr = P(x, 2.9, z); txt('鬼', pr[0], pr[1], 22, '#e60012', 'center', '#fff'); } else nameAt(q.p, x, 2.0, z);
+    });
+    hud(M); if (M.t < 1.5) txt('鬼はまだ動けない！ にげろ！', 640, 150, 44, '#e60012', 'center', '#fff');
+  },
+  hide(M) {
+    const sh = M.ph === 'show'; st3(M, { bg: ['#b2f2bb', '#d3f9d8'], floor: '#8ce99a' }); box(0, 2.75, -1.4, 12.5, 0.2, 2.2, '#5bb83a');
+    HS.forEach((l, i) => {
+      const x = (i - 2.5) * 2.0, y = 2.85, z = -1.4, hit = sh && M.sk.sel.includes(i); if (hit) cyl(x, y + 0.02, z, 0.95, 0.03, '#ffcc00', { unlit: 1 });
+      if (i === 0) cyl(x, y + 0.5, z, 0.45, 1.0, '#8b5a2b'); else if (i === 1) { cyl(x, y + 0.6, z, 0.16, 1.2, '#6f4520'); ball(x, y + 1.6, z, 0.75, '#2f9e44'); } else if (i === 2) { box(x, y + 0.35, z, 1.4, 0.5, 0.7, '#e03131'); box(x - 0.1, y + 0.75, z, 0.8, 0.35, 0.65, '#e03131'); } else if (i === 3) { ball(x - 0.3, y + 0.35, z, 0.45, '#37b24d'); ball(x + 0.3, y + 0.4, z, 0.5, '#2f9e44'); } else if (i === 4) cyl(x, y + 0.45, z, 0.45, 0.9, '#20c997', { rz: Math.PI / 2 }); else { box(x, y + 0.45, z, 1.2, 0.9, 0.9, '#f08c00'); cone(x, y + 1.25, z, 0.95, 0.7, '#c92a2a'); }
+      const pr = P(x, y - 0.25, z + 1.1); txt(l, pr[0], pr[1], 20, hit ? '#e60012' : '#16233a', 'center', '#fff');
+      if (sh) M.team(1).filter(q => q.a === i).forEach((q, k, a) => mii(q.p, x + (k - (a.length - 1) / 2) * 0.5, z + 0.75, { y: 2.85 + (q.f ? Math.abs(Math.sin(TT * 9)) * 0.25 : 0), s: 0.42, nosh: 1 }));
+    });
+    hud(M); txt(`さがす側：${M.sk.p.name}　見つけた数 ${M.fd} / 勝つには ${M.need}`, 640, 112, 26, '#16233a', 'center', '#fff');
+    pods3(M, { sc: () => '', ok: q => !sh && q.a !== undefined, bub: q => sh && q !== M.sk ? (q.f ? '見つかった' : 'セーフ') : null, bc: q => q.f ? '#e60012' : '#22b860' });
+  },
+};
+
+/* ---------- すごろく（3D） ---------- */
+const bw = n => [(n.x - 640) / 55, (n.y - 425) / 55];
+const bcam = () => cam3(0, 16.5, 13, 0, 0, 1.3, 38);
+function bproj(n, h) { bcam(); const w = bw(n); return P(w[0], h || 0.4, w[1]); }
+function board3D() {
+  const d = B.d, N = B.N; sky(d.sky[0], d.sky[1]); bcam(); const sea = d.name.includes('アイランド') ? '#2b8fe6' : d.name.includes('環状線') ? '#7c8798' : '#2a1210';
+  box(0, -0.9, 0, 120, 0.2, 90, sea);
+  const L = d.loop.map(p => bw({ x: p[0], y: p[1] }));
+  L.forEach((a, i) => { const b = L[(i + 1) % L.length]; strip(a, b, 3.0, -0.5, 0.7, d.rim); cyl(a[0], -0.5, a[1], 1.5, 0.7, d.rim); strip(a, b, 2.3, -0.42, 0.72, d.land); cyl(a[0], -0.42, a[1], 1.15, 0.72, d.land); });
+  G3.push(0, -0.45, 0.1, 17.5, 0.7, 8.6); prim('cyl', 0, 0, 0, 1, 1, 1, d.land); G3.pop();
+  if (d.name.includes('アイランド')) for (const [tx, tz] of [[-4, -1.5], [3.5, 1.2], [-1, 2.2], [5.5, -1.8], [-6.5, 1.5]]) { cyl(tx, 0.6, tz, 0.14, 1.4, '#8b5a2b'); ball(tx, 1.5, tz, 0.7, '#2f9e44', { s: [1.3, 0.7, 1.3] }); }
+  else if (d.name.includes('環状線')) for (const [tx, tz, hh] of [[-5, -2, 1.6], [-3.4, -1.6, 2.4], [3, 1.8, 2.0], [5, 1.4, 1.3], [-5.5, 2.2, 1.2], [4.6, -2, 1.8]]) { box(tx, hh / 2, tz, 1.0, hh, 1.0, '#8794a8'); box(tx, hh / 2, tz + 0.51, 0.7, hh * 0.7, 0.02, '#ffe066', { unlit: 1 }); }
+  else { cone(0, 1.2, 2.6, 2.6, 2.8, '#6b3a2a'); ball(0, 2.5, 2.6, 0.55 + Math.sin(TT * 3) * 0.05, '#ff6b35', { unlit: 1 }); }
+  N.forEach(n => n.next.forEach(j => strip(bw(n), bw(N[j]), 0.4, 0, 0.1, d.path)));
+  N.forEach((n, i) => {
+    const c = TL[n.t], w = bw(n), lit = B.fork && B.fork.includes(i) && Math.floor(TT * 4) % 2;
+    box(w[0], 0.14, w[1], 0.95, 0.22, 0.95, c[0]); if (lit) box(w[0], 0.1, w[1], 1.2, 0.16, 1.2, '#ffcc00', { unlit: 1 });
+    const pr = P(w[0], 0.3, w[1]), l = c[1], k = pr[2] * 1.55; txt(l, pr[0], pr[1], (l.length >= 3 ? 14 : l.length === 2 ? (n.t === 'B' || n.t === 'R' ? 22 : 18) : 26) * k, n.t === 'S' ? '#ff4d5e' : '#fff', 'center', n.t === 'S' ? null : 'rgba(0,0,0,.25)');
+    if (n.t === 'K' || n.t === 'V') { const p2 = P(w[0], 0.3, w[1] + 0.85); txt(n.t === 'K' ? B.bank + '枚' : 'あと' + B.volc, p2[0], p2[1], 15, '#fff', 'center', '#16233a'); }
+    if (i === B.star) { const pop = Math.min(1, (NOW - B.starT) / 400), ps = P(w[0], 1.5 + Math.sin(TT * 3) * 0.12, w[1]); cyl(w[0], 0.27, w[1], 0.5, 0.02, '#ffcc00', { unlit: 1 }); ctx.save(); ctx.translate(ps[0], ps[1]); ctx.scale(pop, pop); starIcon(0, 0, 30 * ps[2] * 1.5); ctx.restore(); }
+  });
+  const OFF = [[-0.27, -0.22], [0.27, -0.22], [-0.27, 0.22], [0.27, 0.22], [0, -0.45], [0, 0.45], [-0.55, 0], [0.55, 0]];
+  players.forEach((p, i) => { const w = bw(N[p.pos]), hp = clamp((NOW - p.hop) / 260, 0, 1), cur = B.turnP === p; mii(p, w[0] + OFF[i][0], w[1] + OFF[i][1], { y: 0.25 + Math.sin(hp * Math.PI) * 0.6, sy: 0.25, s: cur ? 0.62 : 0.5, arm: cur && B.dice && B.dice.idle ? [0, 0.6 + Math.sin(TT * 7) * 0.3] : 0 }); });
+  if (B.dice) {
+    const k = B.dice.f.length;
+    B.dice.f.forEach((f, i) => { const x = (i - (k - 1) / 2) * 2.2, r = DIEROT[f] || [0, 0]; shadow(x, 2.4, 0.9); if (B.dice.roll) die3D(x, 3.4, 2.4, 1.5, TT * 9 + i, TT * 7, TT * 5); else if (B.dice.idle) die3D(x, 3.0 + Math.sin(TT * 3 + i) * 0.15, 2.4, 1.5, 0.35, TT * 1.5 + i, 0.2); else die3D(x, 2.3, 2.4, 1.5, r[0], 0, r[1]); });
+    if (B.dice.idle) { const pr = P(0, 1.2, 4.2); txt(isAuto(B.turnP) ? '考え中…' : 'スマホを振ってサイコロ！', pr[0], pr[1], 22, '#fff', 'center', '#16233a'); }
+  }
+}
+function drawFinale() { // 表彰台（3D）と順位表
+  sky('#3b2a4a', '#16233a'); cam3(0, 3.4, 12.5, 0, 1.9, 0, 40); box(0, -0.1, 0, 80, 0.2, 50, '#4a3860'); cyl(-3.6, 0.01, 0, 4.6, 0.04, '#6c5a8a');
+  const R = fin.rows, n = R.length, rh = Math.min(84, 470 / n), PX = [0, -1.9, 1.9], PH = [1.6, 1.1, 0.7];
+  R.forEach((r, i) => {
+    if (i < n - fin.shown) return; const top = r.place === 1;
+    if (i < 3) { const x = -3.6 + PX[i], h = PH[Math.min(2, r.place - 1)]; box(x, h / 2, -1.5, 1.7, h, 1.5, top ? '#ffcc00' : '#d7dde6'); mii(r.p, x, -1.5, { y: h + (top ? Math.abs(Math.sin(TT * 8)) * 0.5 : 0), s: 0.95, arm: top ? [1, 1] : [0, 0.5], nosh: 1 }); const pr = P(x, h * 0.5, -0.7); txt(r.place + '位', pr[0], pr[1], 28, '#16233a'); }
+    else mii(r.p, -3.6 + (i - 3 - (n - 4) / 2) * 1.25, 2.4, { s: 0.7, arm: [0, 0.4] });
+  });
+  txt('結果発表', 640, 62, 52, '#ffcc00', 'center', '#16233a');
+  R.forEach((r, i) => {
+    if (i < n - fin.shown) return; const y = 130 + i * rh + rh / 2, top = r.place === 1;
+    ctx.fillStyle = top ? '#ffcc00' : 'rgba(255,255,255,.92)'; rr(700, y - rh * 0.42, 550, rh * 0.84, 18); ctx.fill();
+    txt(r.place + '位', 720, y, Math.min(34, rh * 0.48), top ? '#e60012' : '#16233a', 'left');
+    avatar(r.p, 830, y, Math.min(24, rh * 0.32)); txt(r.p.name, 868, y, Math.min(28, rh * 0.4), '#16233a', 'left');
+    txt(B ? `スター${r.p.stars} コイン${r.p.coins}` : `${r.p.coins}ポイント`, 1234, y, Math.min(20, rh * 0.3), '#16233a', 'right', null, 500);
+  });
+  if (fin.spec) txt(fin.spec, 975, 108, 18, '#fff');
+}
 
 /* =================================================================
    コントローラー（スマホ）
